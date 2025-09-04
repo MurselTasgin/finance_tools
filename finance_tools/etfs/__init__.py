@@ -9,6 +9,8 @@ This module provides tools for:
 - ETF performance tracking
 """
 from . import tefas
+from . import analysis
 from .tefas import TefasDownloader
+
 # Future ETF modules will be imported here
-__all__ = ["tefas", "TefasDownloader"]   
+__all__ = ["tefas", "analysis", "TefasDownloader"]

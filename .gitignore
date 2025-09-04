@@ -181,3 +181,10 @@ results/
 .Trashes
 ehthumbs.db
 Thumbs.db 
+etf_scan_results*
+etf_emk_scan_results*
+*.cython_debug
+finance_tools.egg-info/
+finance_tools.log
+finance_tools.db
+*.db

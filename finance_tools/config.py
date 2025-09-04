@@ -39,6 +39,15 @@ class Config:
             "DATA_CACHE_DIR": os.getenv("DATA_CACHE_DIR", "./cache"),
             "DATA_EXPIRY_HOURS": int(os.getenv("DATA_EXPIRY_HOURS", "24")),
             "DATA_FORMAT": os.getenv("DATA_FORMAT", "csv"),
+
+            # Database
+            "DATABASE_TYPE": os.getenv("DATABASE_TYPE", "sqlite"),
+            "DATABASE_NAME": os.getenv("DATABASE_NAME", "finance_tools.db"),
+            "DATABASE_HOST": os.getenv("DATABASE_HOST", "localhost"),
+            "DATABASE_PORT": os.getenv("DATABASE_PORT", "5432"),
+            "DATABASE_USER": os.getenv("DATABASE_USER", "postgres"),
+            "DATABASE_PASSWORD": os.getenv("DATABASE_PASSWORD", ""),
+            "DATABASE_ECHO": os.getenv("DATABASE_ECHO", "false").lower() == "true",
             
             # Network settings
             "REQUEST_TIMEOUT": int(os.getenv("REQUEST_TIMEOUT", "30")),
@@ -92,6 +101,41 @@ class Config:
             "format": self.get("LOG_FORMAT"),
             "enabled": self.get("ENABLE_LOGGING"),
         }
+
+    def get_database_url(self) -> str:
+        """Build and return a SQLAlchemy database URL from config values.
+
+        Supports:
+        - sqlite (default): uses a file path in the current working directory unless an absolute path is provided
+        - postgres: builds a standard postgresql URL
+        """
+        db_type = (self.get("DATABASE_TYPE") or "sqlite").lower()
+        if db_type == "sqlite":
+            db_name = self.get("DATABASE_NAME") or "finance_tools.db"
+
+
+
+
+
+            if db_name in {":memory:", "memory"}:
+                return "sqlite+pysqlite:///:memory:"
+            # If absolute path provided, use as-is; else place in project root
+            db_path = Path(db_name)
+            if not db_path.is_absolute():
+                db_path = Path.cwd() / db_path
+            return f"sqlite:///{db_path.as_posix()}"
+
+        if db_type in {"postgres", "postgresql"}:
+            user = self.get("DATABASE_USER") or "postgres"
+            password = self.get("DATABASE_PASSWORD") or ""
+            host = self.get("DATABASE_HOST") or "localhost"
+            port = self.get("DATABASE_PORT") or "5432"
+            name = self.get("DATABASE_NAME") or "finance_tools"
+            auth = f"{user}:{password}@" if password else f"{user}@"
+            return f"postgresql+psycopg2://{auth}{host}:{port}/{name}"
+
+        # Fallback to treating it as a full URL string if provided
+        return str(self.get("DATABASE_TYPE"))
     
     def get_network_config(self) -> Dict[str, Any]:
         """Get network configuration."""

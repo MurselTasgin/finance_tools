@@ -245,3 +245,31 @@ If you encounter any issues or have questions, please:
 - [ ] Add support for cryptocurrency data
 - [ ] Implement real-time data streaming
 - [ ] Add backtesting framework
+
+
+
+* USAGE
+----> DOWNLOAD DATA =======================================================================
+To download tefas fund data, you can use the following cli command.
+
+= Download Investment funds data (YAT) for the given start & end dates:
+- finance-tools tefas 2025-08-15 2025-08-31 --kind YAT --db ./test_finance_tools.db
+
+= Download pension funds data (EMK) for the given start & end dates:
+- finance-tools tefas 2025-08-15 2025-08-31 --kind EMK --db ./test_finance_tools.db
+
+
+---> ETF Analysis ==========================================================================
+finance-tools etf-analyze --start 2024-01-01 --end 2025-01-01 --include EMEK --ema 20 50 --ema-cross 20 50 --macd 26 12 9 --db ./test_finance_tools.db
+
+finance-tools etf-analyze --start 2024-01-01 --end 2025-01-01 --exclude EMEK --ema 20 50 --ema-cross 20 50 --macd 26 12 9 --db ./test_finance_tools.db
+
+finance-tools etf-analyze --funds NNF YAC --start 2024-01-01 --end 2025-01-01 --db ./test_finance_tools.db
+
+finance-tools etf-scan --start 2024-06-01 --end 2025-05-01 --ema-short 20 --ema-long 50 --macd 26 12 9 \
+    --rsi 14 --rsi-lower 30 --rsi-upper 70 --db ./test_finance_tools.db
+
+-----> ETF Scanner =========================================================================
+--> FOR INVESTEMENT ETFS
+finance-tools etf-scan --start 2024-07-01 --end 2025-09-04 --exclude EMEKL  --ema-short 20 --ema-long 50 --macd 26 12 9 \
+    --rsi 14 --rsi-lower 30 --rsi-upper 70 --db ./test_finance_tools.db > etf_scan_results_04_Sep_2025.md

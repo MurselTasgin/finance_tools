@@ -25,6 +25,10 @@ class TefasDownloader:
         """
         f_list = []
         
+        if kind is None:
+            kind = 'YAT'
+
+
         # Convert string dates to datetime objects
         if isinstance(startDate, str):
             startDate = datetime.datetime.strptime(startDate, "%Y-%m-%d")
