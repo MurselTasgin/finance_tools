@@ -197,3 +197,5 @@ if __name__ == "__main__":
         print("Invalid choice. Running interactive download...")
         download_tefas_data()
 
+
+
