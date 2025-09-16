@@ -1,10 +1,14 @@
 from .crawler import Crawler
 import pandas as pd
 import datetime
+from typing import Callable, Optional
 
 class TefasDownloader:
-    def __init__(self):
+    def __init__(self, progress_callback: Optional[Callable[[str, int, int], None]] = None):
         self.crawler = Crawler()
+        self.progress_callback = progress_callback
+        self.total_chunks = 0
+        self.current_chunk = 0
 
     def download_fund_prices(self, funds, startDate, endDate, columns=None, kind='YAT'):
         """
@@ -43,6 +47,20 @@ class TefasDownloader:
         if endDate < startDate:
             raise ValueError("endDate cannot be before startDate")
         
+        # Calculate total chunks for progress tracking
+        current_date = startDate
+        temp_date = startDate
+        self.total_chunks = 0
+        while temp_date <= endDate:
+            if funds is None:
+                chunk_size = 5
+            else:
+                chunk_size = 30
+            temp_date = min(temp_date + datetime.timedelta(days=chunk_size), endDate)
+            temp_date = temp_date + datetime.timedelta(days=1)
+            self.total_chunks += 1
+        
+        self.current_chunk = 0
         current_date = startDate
         
         while current_date <= endDate:
@@ -50,11 +68,11 @@ class TefasDownloader:
             if funds is None:
                 # For all funds, use shorter periods (5 days) to prevent timeouts
                 chunk_size = 5
-                print(f"Fetching ALL funds - using {chunk_size}-day chunks to prevent timeouts")
+                status_msg = f"Fetching ALL funds - using {chunk_size}-day chunks to prevent timeouts"
             else:
                 # For specific funds, use longer periods (30 days) for efficiency
                 chunk_size = 30
-                print(f"Fetching specific funds - using {chunk_size}-day chunks")
+                status_msg = f"Fetching specific funds - using {chunk_size}-day chunks"
             
             # Calculate the end date for this chunk
             chunk_end = min(current_date + datetime.timedelta(days=chunk_size), endDate)
@@ -62,7 +80,14 @@ class TefasDownloader:
             b_date = current_date.strftime("%Y-%m-%d")
             e_date = chunk_end.strftime("%Y-%m-%d")
             
-            print(f"Fetching data from {b_date} to {e_date}")
+            # Report progress
+            self.current_chunk += 1
+            progress_percent = int((self.current_chunk / self.total_chunks) * 100)
+            
+            if self.progress_callback:
+                self.progress_callback(f"Fetching data from {b_date} to {e_date}", progress_percent, self.current_chunk)
+            else:
+                print(f"Fetching data from {b_date} to {e_date} ({progress_percent}%)")
             
             if funds is not None:
                 for f_name in funds:
@@ -76,11 +101,23 @@ class TefasDownloader:
                         )
                         if not t_data.empty:
                             f_list.append(t_data)
-                            print(f"  ✅ Fetched data for {f_name}: {len(t_data)} rows")
+                            msg = f"  ✅ Fetched data for {f_name}: {len(t_data)} rows"
+                            if self.progress_callback:
+                                self.progress_callback(msg, progress_percent, self.current_chunk)
+                            else:
+                                print(msg)
                         else:
-                            print(f"  ⚠️  No data found for {f_name}")
+                            msg = f"  ⚠️  No data found for {f_name}"
+                            if self.progress_callback:
+                                self.progress_callback(msg, progress_percent, self.current_chunk)
+                            else:
+                                print(msg)
                     except Exception as e:
-                        print(f"  ❌ Error fetching data for {f_name}: {e}")
+                        msg = f"  ❌ Error fetching data for {f_name}: {e}"
+                        if self.progress_callback:
+                            self.progress_callback(msg, progress_percent, self.current_chunk)
+                        else:
+                            print(msg)
             else:
                 try:
                     t_data = self.crawler.fetch(
@@ -92,11 +129,23 @@ class TefasDownloader:
                     )
                     if not t_data.empty:
                         f_list.append(t_data)
-                        print(f"  ✅ Fetched data: {len(t_data)} rows")
+                        msg = f"  ✅ Fetched data: {len(t_data)} rows"
+                        if self.progress_callback:
+                            self.progress_callback(msg, progress_percent, self.current_chunk)
+                        else:
+                            print(msg)
                     else:
-                        print(f"  ⚠️  No data found")
+                        msg = f"  ⚠️  No data found"
+                        if self.progress_callback:
+                            self.progress_callback(msg, progress_percent, self.current_chunk)
+                        else:
+                            print(msg)
                 except Exception as e:
-                    print(f"  ❌ Error fetching data: {e}")
+                    msg = f"  ❌ Error fetching data: {e}"
+                    if self.progress_callback:
+                        self.progress_callback(msg, progress_percent, self.current_chunk)
+                    else:
+                        print(msg)
             
             # Move to next chunk
             current_date = chunk_end + datetime.timedelta(days=1)
@@ -112,7 +161,17 @@ class TefasDownloader:
             # Rename 'code' column to 'symbol' if it exists
             if 'code' in funds_df.columns:
                 funds_df.rename(columns={"code": "symbol"}, inplace=True)
+            
+            final_msg = f"✅ Download completed! Total records: {len(funds_df)}"
+            if self.progress_callback:
+                self.progress_callback(final_msg, 100, self.total_chunks)
+            else:
+                print(final_msg)
             return funds_df
         else:
-            print("⚠️  No data was fetched. Returning empty DataFrame.")
+            final_msg = "⚠️  No data was fetched. Returning empty DataFrame."
+            if self.progress_callback:
+                self.progress_callback(final_msg, 100, self.total_chunks)
+            else:
+                print(final_msg)
             return pd.DataFrame()

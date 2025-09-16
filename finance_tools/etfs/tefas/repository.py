@@ -209,4 +209,219 @@ class TefasRepository:
         stmt = stmt.order_by(TefasFundInfo.code.asc(), TefasFundInfo.date.asc())
         return list(self.session.execute(stmt).scalars().all())
 
+    def get_total_records_count(self) -> int:
+        """Get total number of records in the database."""
+        stmt = select(func.count(TefasFundInfo.id))
+        return self.session.execute(stmt).scalar() or 0
+
+    def get_unique_funds_count(self) -> int:
+        """Get number of unique fund codes."""
+        stmt = select(func.count(func.distinct(TefasFundInfo.code)))
+        return self.session.execute(stmt).scalar() or 0
+
+    def get_date_range(self) -> dict:
+        """Get the date range of available data."""
+        stmt = select(
+            func.min(TefasFundInfo.date).label("start"),
+            func.max(TefasFundInfo.date).label("end")
+        )
+        result = self.session.execute(stmt).first()
+        return {
+            "start": result.start if result else None,
+            "end": result.end if result else None,
+        }
+
+    def get_last_download_date(self) -> Optional[date]:
+        """Get the date of the most recent record."""
+        stmt = select(func.max(TefasFundInfo.date))
+        return self.session.execute(stmt).scalar()
+
+    def get_paginated_records(
+        self,
+        page: int = 1,
+        page_size: int = 50,
+        search: str = "",
+        sort_by: Optional[str] = None,
+        sort_dir: str = "asc",
+        filters: Optional[List[dict]] = None,
+    ) -> Tuple[List[TefasFundInfo], int]:
+        """Get paginated records with filtering and sorting."""
+        stmt = select(TefasFundInfo)
+        
+        # Apply search
+        if search:
+            search_term = f"%{search}%"
+            stmt = stmt.where(
+                or_(
+                    TefasFundInfo.code.like(search_term),
+                    TefasFundInfo.title.like(search_term),
+                )
+            )
+        
+        # Apply filters
+        if filters:
+            for filter_cond in filters:
+                column = filter_cond.get("column")
+                operator = filter_cond.get("operator")
+                value = filter_cond.get("value")
+                value2 = filter_cond.get("value2")
+                
+                if not column or not operator or value is None:
+                    continue
+                
+                # Get the column attribute
+                column_attr = getattr(TefasFundInfo, column, None)
+                if column_attr is None:
+                    continue
+                
+                # Apply filter based on operator
+                if operator == "equals":
+                    if isinstance(value, str) and value.isdigit():
+                        stmt = stmt.where(column_attr == int(value))
+                    else:
+                        stmt = stmt.where(column_attr == value)
+                elif operator == "contains":
+                    stmt = stmt.where(column_attr.like(f"%{value}%"))
+                elif operator == "greater_than":
+                    if isinstance(value, str) and value.replace(".", "").isdigit():
+                        stmt = stmt.where(column_attr > float(value))
+                    else:
+                        stmt = stmt.where(column_attr > value)
+                elif operator == "less_than":
+                    if isinstance(value, str) and value.replace(".", "").isdigit():
+                        stmt = stmt.where(column_attr < float(value))
+                    else:
+                        stmt = stmt.where(column_attr < value)
+                elif operator == "between" and value2 is not None:
+                    if isinstance(value, str) and value.replace(".", "").isdigit():
+                        stmt = stmt.where(
+                            and_(
+                                column_attr >= float(value),
+                                column_attr <= float(value2)
+                            )
+                        )
+                    else:
+                        stmt = stmt.where(
+                            and_(
+                                column_attr >= value,
+                                column_attr <= value2
+                            )
+                        )
+        
+        # Get total count
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total = self.session.execute(count_stmt).scalar() or 0
+        
+        # Apply sorting
+        if sort_by:
+            column_attr = getattr(TefasFundInfo, sort_by, None)
+            if column_attr is not None:
+                if sort_dir.lower() == "desc":
+                    stmt = stmt.order_by(column_attr.desc())
+                else:
+                    stmt = stmt.order_by(column_attr.asc())
+        
+        # Apply pagination
+        offset = (page - 1) * page_size
+        stmt = stmt.offset(offset).limit(page_size)
+        
+        records = list(self.session.execute(stmt).scalars().all())
+        return records, total
+
+    def get_plot_data(
+        self,
+        x_column: str,
+        y_column: str,
+        filters: Optional[List[dict]] = None,
+    ) -> List[dict]:
+        """Get data for plotting with optional filters."""
+        # Get column attributes
+        x_attr = getattr(TefasFundInfo, x_column, None)
+        y_attr = getattr(TefasFundInfo, y_column, None)
+        
+        if x_attr is None or y_attr is None:
+            return []
+        
+        stmt = select(x_attr, y_attr)
+        
+        # Apply filters (same logic as get_paginated_records)
+        if filters:
+            for filter_cond in filters:
+                column = filter_cond.get("column")
+                operator = filter_cond.get("operator")
+                value = filter_cond.get("value")
+                value2 = filter_cond.get("value2")
+                
+                if not column or not operator or value is None:
+                    continue
+                
+                column_attr = getattr(TefasFundInfo, column, None)
+                if column_attr is None:
+                    continue
+                
+                if operator == "equals":
+                    if isinstance(value, str) and value.isdigit():
+                        stmt = stmt.where(column_attr == int(value))
+                    else:
+                        stmt = stmt.where(column_attr == value)
+                elif operator == "contains":
+                    stmt = stmt.where(column_attr.like(f"%{value}%"))
+                elif operator == "greater_than":
+                    if isinstance(value, str) and value.replace(".", "").isdigit():
+                        stmt = stmt.where(column_attr > float(value))
+                    else:
+                        stmt = stmt.where(column_attr > value)
+                elif operator == "less_than":
+                    if isinstance(value, str) and value.replace(".", "").isdigit():
+                        stmt = stmt.where(column_attr < float(value))
+                    else:
+                        stmt = stmt.where(column_attr < value)
+                elif operator == "between" and value2 is not None:
+                    if isinstance(value, str) and value.replace(".", "").isdigit():
+                        stmt = stmt.where(
+                            and_(
+                                column_attr >= float(value),
+                                column_attr <= float(value2)
+                            )
+                        )
+                    else:
+                        stmt = stmt.where(
+                            and_(
+                                column_attr >= value,
+                                column_attr <= value2
+                            )
+                        )
+        
+        # Filter out null values
+        stmt = stmt.where(
+            and_(
+                x_attr.is_not(None),
+                y_attr.is_not(None)
+            )
+        )
+        
+        # Limit results for performance
+        stmt = stmt.limit(10000)
+        
+        results = self.session.execute(stmt).all()
+        
+        plot_data = []
+        for row in results:
+            x_val = row[0]
+            y_val = row[1]
+            
+            # Convert dates to strings for JSON serialization
+            if hasattr(x_val, 'isoformat'):
+                x_val = x_val.isoformat()
+            if hasattr(y_val, 'isoformat'):
+                y_val = y_val.isoformat()
+            
+            plot_data.append({
+                "x": x_val,
+                "y": float(y_val) if y_val is not None else 0,
+                "label": f"{x_val}: {y_val}"
+            })
+        
+        return plot_data
+
 

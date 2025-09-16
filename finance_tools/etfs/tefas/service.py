@@ -6,7 +6,7 @@ Service layer to persist TEFAS data using downloader and repository abstractions
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Tuple, List, Optional, Sequence
+from typing import Tuple, List, Optional, Sequence, Callable
 
 import pandas as pd
 
@@ -17,11 +17,12 @@ from .repository import DatabaseEngineProvider, TefasRepository
 class TefasPersistenceService:
     """Coordinates download and persistence of TEFAS data."""
 
-    def __init__(self):
-        self.downloader = TefasDownloader()
+    def __init__(self, progress_callback: Optional[Callable[[str, int, int], None]] = None):
+        self.downloader = TefasDownloader(progress_callback)
         self.db_provider = DatabaseEngineProvider()
         self.SessionLocal = self.db_provider.get_session_factory()
         self.db_provider.ensure_initialized()
+        self.progress_callback = progress_callback
 
     def download_last_week(self, code: Optional[str] = None, kind: str = "BYF") -> pd.DataFrame:
         end = datetime.utcnow().date().strftime("%Y-%m-%d")
@@ -53,11 +54,20 @@ class TefasPersistenceService:
         kind: str = "BYF",
     ) -> Tuple[int, int]:
         df = self.download_between(start_date=start_date, end_date=end_date, funds=funds, kind=kind)
+        
+        # Report progress for persistence phase
+        if self.progress_callback:
+            self.progress_callback("Saving data to database...", 90, 0)
+        
         return self.persist_dataframe(df)
 
     def persist_dataframe(self, df: pd.DataFrame) -> Tuple[int, int]:
         if df is None or df.empty:
             return 0, 0
+        
+        # Create a proper copy to avoid SettingWithCopyWarning
+        df = df.copy()
+        
         # Split into info and breakdown dicts
         # Normalize columns
         if "code" not in df.columns and "symbol" in df.columns:

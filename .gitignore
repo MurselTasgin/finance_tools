@@ -188,3 +188,5 @@ finance_tools.egg-info/
 finance_tools.log
 finance_tools.db
 *.db
+node_modules/
+package-lock.json
