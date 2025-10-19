@@ -261,4 +261,110 @@ export const stockApi = {
   },
 };
 
+// Analytics API
+export const analyticsApi = {
+  // Task Management - Start Analysis in Background
+  startAnalysis: async (analysis_type: string, analysis_name: string, parameters: any): Promise<{ task_id: string; message: string }> => {
+    const response = await api.post('/api/analytics/run', {
+      analysis_type,
+      analysis_name,
+      parameters,
+    });
+    return response.data;
+  },
+
+  // Task Management - Get Current Progress
+  getAnalysisProgress: async (): Promise<any> => {
+    const response = await api.get('/api/analytics/progress');
+    return response.data;
+  },
+
+  // Task Management - Get Active Tasks
+  getActiveTasks: async (): Promise<{ active_tasks: number; tasks: any[] }> => {
+    const response = await api.get('/api/analytics/tasks');
+    return response.data;
+  },
+
+  // Task Management - Get Task History
+  getAnalysisHistory: async (params: {
+    analysis_type?: string;
+    status?: string;
+    limit?: number;
+    page?: number;
+  } = {}): Promise<{ tasks: any[]; total: number; page: number; limit: number; pages: number }> => {
+    const response = await api.get('/api/analytics/history', { params });
+    return response.data;
+  },
+
+  // Task Management - Cancel Running Task
+  cancelAnalysis: async (task_id: string): Promise<{ message: string; task_id: string }> => {
+    const response = await api.post(`/api/analytics/cancel/${ task_id}`);
+    return response.data;
+  },
+
+  // Task Management - Get Task Details with Logs
+  getAnalysisTaskDetails: async (task_id: string): Promise<any> => {
+    const response = await api.get(`/api/analytics/task-details/${ task_id}`);
+    return response.data;
+  },
+
+  // ETF Analytics
+  runETFTechnicalAnalysis: async (parameters: any): Promise<any> => {
+    const response = await api.post('/api/analytics/etf/technical', parameters);
+    return response.data;
+  },
+
+  runETFScanAnalysis: async (parameters: any): Promise<any> => {
+    const response = await api.post('/api/analytics/etf/scan', parameters);
+    return response.data;
+  },
+
+  // Stock Analytics
+  runStockTechnicalAnalysis: async (parameters: any): Promise<any> => {
+    const response = await api.post('/api/analytics/stock/technical', parameters);
+    return response.data;
+  },
+
+  // Analytics capabilities and metadata
+  getCapabilities: async (): Promise<any> => {
+    const response = await api.get('/api/analytics/capabilities');
+    return response.data;
+  },
+
+  getHistory: async (params: {
+    user_id?: string;
+    analysis_type?: string;
+    limit?: number;
+  } = {}): Promise<{ history: any[] }> => {
+    const response = await api.get('/api/analytics/history', { params });
+    return response.data;
+  },
+
+  getCachedResults: async (params: {
+    analysis_type?: string;
+    status?: string;
+    search?: string;
+    page?: number;
+    limit?: number;
+  } = {}): Promise<{
+    results: any[];
+    total: number;
+    page: number;
+    limit: number;
+    pages: number;
+  }> => {
+    const response = await api.get('/api/analytics/cache', { params });
+    return response.data;
+  },
+
+  // Export functionality
+  exportResults: async (resultId: string, format: string = 'csv'): Promise<Blob> => {
+    const response = await api.get(`/api/analytics/results/${resultId}/export`, {
+      params: { format },
+      responseType: 'blob',
+    });
+    return response.data;
+  },
+};
+
 export default api;

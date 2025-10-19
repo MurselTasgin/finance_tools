@@ -22,22 +22,30 @@ class EtfScanner:
         for code, df in code_to_df.items():
             if df is None or df.empty or criteria.column not in df.columns:
                 continue
+            # Build indicators based on non-zero weights (selected scanners only)
+            indicators = {}
+            if criteria.w_ema_cross > 0:
+                indicators["ema"] = {"windows": [criteria.ema_short, criteria.ema_long]}
+                indicators["ema_cross"] = {"short": criteria.ema_short, "long": criteria.ema_long}
+            if criteria.w_macd > 0:
+                indicators["macd"] = {
+                    "window_slow": criteria.macd_slow,
+                    "window_fast": criteria.macd_fast,
+                    "window_sign": criteria.macd_sign,
+                }
+            if criteria.w_rsi > 0:
+                indicators["rsi"] = {"window": criteria.rsi_window}
+            if criteria.w_momentum > 0:
+                indicators["momentum"] = {"windows": [30, 60, 90, 180, 360]}
+            if criteria.w_momentum_daily > 0:
+                indicators["daily_momentum"] = {"windows": [30, 60, 90, 180, 360]}
+            if criteria.w_supertrend > 0:
+                indicators["supertrend"] = {"hl_factor": 0.05, "atr_period": 10, "multiplier": 3.0}
+            
             enriched = self.indicator_calculator.compute(
                 df,
                 criteria.column,
-                indicators={
-                    "ema": {"windows": [criteria.ema_short, criteria.ema_long]},
-                    "ema_cross": {"short": criteria.ema_short, "long": criteria.ema_long},
-                    "macd": {
-                        "window_slow": criteria.macd_slow,
-                        "window_fast": criteria.macd_fast,
-                        "window_sign": criteria.macd_sign,
-                    },
-                    "rsi": {"window": criteria.rsi_window},
-                "momentum": {"windows": [30, 60, 90, 180, 360]},
-                "daily_momentum": {"windows": [30, 60, 90, 180, 360]},
-                "supertrend": {"hl_factor": 0.05, "atr_period": 10, "multiplier": 3.0},
-                },
+                indicators=indicators,
             )
             suggestion, score, components = self._derive_suggestion_and_score(enriched, criteria)
             last_row = enriched.iloc[-1]
@@ -85,28 +93,69 @@ class EtfScanner:
         rsi_oversold = pd.notnull(rsi) and rsi < criteria.rsi_lower
         rsi_overbought = pd.notnull(rsi) and rsi > criteria.rsi_upper
 
-        # Build reasons list (informational)
-        if cross_up:
-            reasons.append(f"EMA {criteria.ema_short} crossed above EMA {criteria.ema_long}")
-        if cross_down:
-            reasons.append(f"EMA {criteria.ema_short} crossed below EMA {criteria.ema_long}")
-        if macd_above and macd_rising:
-            reasons.append("MACD above signal and rising")
-        elif pd.notnull(macd) and pd.notnull(macd_signal) and not macd_above:
-            reasons.append("MACD below signal")
-        if rsi_oversold:
-            reasons.append(f"RSI below {criteria.rsi_lower} (oversold)")
-        if rsi_overbought:
-            reasons.append(f"RSI above {criteria.rsi_upper} (overbought)")
-
-        # Continuous scoring components
-        # Clip helpers
-        def clip(v: float, lo: float, hi: float) -> float:
-            return float(min(max(v, lo), hi))
-
+        # Price and EMA values
         price = float(last.get(col)) if pd.notnull(last.get(col)) else None
         ema_s = last.get(f"{col}_ema_{criteria.ema_short}")
         ema_l = last.get(f"{col}_ema_{criteria.ema_long}")
+
+        # Build comprehensive analysis reasons
+        reasons.append("=" * 60)
+        reasons.append("🔍 DETAILED TECHNICAL ANALYSIS")
+        reasons.append("=" * 60)
+
+        # EMA Analysis Section
+        reasons.append("")
+        reasons.append("📈 EMA (Exponential Moving Average) Analysis:")
+        if cross_up:
+            reasons.append(f"  ✅ BULLISH CROSSOVER: EMA {criteria.ema_short} crossed above EMA {criteria.ema_long}")
+        elif cross_down:
+            reasons.append(f"  ❌ BEARISH CROSSOVER: EMA {criteria.ema_short} crossed below EMA {criteria.ema_long}")
+        else:
+            reasons.append(f"  ➖ NO CROSSOVER: No recent EMA crossover detected")
+        
+        if pd.notnull(ema_s) and pd.notnull(price) and price > 0:
+            if price > ema_s:
+                reasons.append(f"  ✅ PRICE POSITION: Price ({price:.2f}) above EMA {criteria.ema_short} ({ema_s:.2f})")
+            else:
+                reasons.append(f"  ❌ PRICE POSITION: Price ({price:.2f}) below EMA {criteria.ema_short} ({ema_s:.2f})")
+        
+        if pd.notnull(ema_s) and pd.notnull(ema_l):
+            if ema_s > ema_l:
+                reasons.append(f"  📈 TREND: Short-term EMA above long-term EMA (UPTREND)")
+            else:
+                reasons.append(f"  📉 TREND: Short-term EMA below long-term EMA (DOWNTREND)")
+
+        # MACD Analysis Section
+        reasons.append("")
+        reasons.append("📊 MACD (Moving Average Convergence Divergence) Analysis:")
+        if pd.notnull(macd) and pd.notnull(macd_signal):
+            if macd_above and macd_rising:
+                reasons.append(f"  ✅ BULLISH: MACD ({macd:.4f}) above signal ({macd_signal:.4f}) and rising")
+            elif macd_above and not macd_rising:
+                reasons.append(f"  ⚠️ NEUTRAL: MACD ({macd:.4f}) above signal ({macd_signal:.4f}) but not rising")
+            else:
+                reasons.append(f"  ❌ BEARISH: MACD ({macd:.4f}) below signal ({macd_signal:.4f})")
+        else:
+            reasons.append(f"  ⚠️ INSUFFICIENT DATA: MACD analysis not available")
+
+        # RSI Analysis Section
+        reasons.append("")
+        reasons.append("📊 RSI (Relative Strength Index) Analysis:")
+        if pd.notnull(rsi):
+            if rsi_oversold:
+                reasons.append(f"  🚀 OVERSOLD: RSI ({rsi:.1f}) below {criteria.rsi_lower} - Strong BUY signal")
+            elif rsi_overbought:
+                reasons.append(f"  🔻 OVERBOUGHT: RSI ({rsi:.1f}) above {criteria.rsi_upper} - Strong SELL signal")
+            elif rsi > 50:
+                reasons.append(f"  📈 BULLISH: RSI ({rsi:.1f}) above 50 - Positive momentum")
+            else:
+                reasons.append(f"  📉 BEARISH: RSI ({rsi:.1f}) below 50 - Negative momentum")
+        else:
+            reasons.append(f"  ⚠️ INSUFFICIENT DATA: RSI analysis not available")
+
+        # Continuous scoring components
+        def clip(v: float, lo: float, hi: float) -> float:
+            return float(min(max(v, lo), hi))
 
         ema_price_comp = 0.0
         ema_cross_comp = 0.0
@@ -172,12 +221,51 @@ class EtfScanner:
 
         score = sum(components.values())
 
+        # Add comprehensive score analysis
+        reasons.append("")
+        reasons.append("=" * 60)
+        reasons.append("📊 SCORE CALCULATION & ANALYSIS")
+        reasons.append("=" * 60)
+        reasons.append(f"Total Calculated Score: {score:.3f}")
+        reasons.append("")
+        reasons.append("Scanner Contributions (Component × Weight = Contribution):")
+        
+        # Add each component's contribution with detailed analysis
+        for component_name, contribution in components.items():
+            weight = getattr(criteria, f"w_{component_name}", 0.0)
+            raw_value = contribution / weight if weight > 0 else 0.0
+            
+            if weight > 0:
+                status = "✅ ACTIVE" if abs(contribution) > 0.001 else "➖ NEUTRAL"
+                reasons.append(f"  • {component_name.replace('_', ' ').title()}: {raw_value:.3f} × {weight} = {contribution:.3f} {status}")
+            else:
+                reasons.append(f"  • {component_name.replace('_', ' ').title()}: {raw_value:.3f} × 0 = 0.000 (INACTIVE)")
+
+        # Add threshold analysis
+        reasons.append("")
+        reasons.append("🎯 THRESHOLD ANALYSIS:")
+        reasons.append(f"  • Buy Threshold: {criteria.score_buy_threshold}")
+        reasons.append(f"  • Sell Threshold: -{criteria.score_sell_threshold}")
+        reasons.append(f"  • Current Score: {score:.3f}")
+
         # Decide recommendation by thresholds on net score
         if score >= criteria.score_buy_threshold:
+            reasons.append("")
+            reasons.append("🚀 FINAL RECOMMENDATION: BUY")
+            reasons.append(f"Reason: Score {score:.3f} >= Buy Threshold {criteria.score_buy_threshold}")
+            reasons.append("Confidence: High - Multiple bullish signals detected")
             return EtfSuggestion(recommendation="buy", reasons=reasons), score, components
-        if score <= -criteria.score_sell_threshold:
+        elif score <= -criteria.score_sell_threshold:
+            reasons.append("")
+            reasons.append("🔻 FINAL RECOMMENDATION: SELL")
+            reasons.append(f"Reason: Score {score:.3f} <= Sell Threshold {-criteria.score_sell_threshold}")
+            reasons.append("Confidence: High - Multiple bearish signals detected")
             return EtfSuggestion(recommendation="sell", reasons=reasons), score, components
-
-        return EtfSuggestion(recommendation="hold", reasons=reasons), score, components
+        else:
+            reasons.append("")
+            reasons.append("⏸️ FINAL RECOMMENDATION: HOLD")
+            reasons.append(f"Reason: Score {score:.3f} between Sell Threshold {-criteria.score_sell_threshold} and Buy Threshold {criteria.score_buy_threshold}")
+            reasons.append("Confidence: Medium - Mixed signals, wait for clearer direction")
+            return EtfSuggestion(recommendation="hold", reasons=reasons), score, components
 
 

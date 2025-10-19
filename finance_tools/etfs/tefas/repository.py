@@ -21,7 +21,7 @@ from sqlalchemy.exc import IntegrityError
 
 from ...config import get_config
 from ...logging import get_logger
-from .models import Base, TefasFundInfo, TefasFundBreakdown, DownloadHistory
+from .models import Base, TefasFundInfo, TefasFundBreakdown, DownloadHistory, AnalysisResult, UserAnalysisHistory, AnalysisTask, AnalysisProgressLog
 
 # Import stock models to ensure they're registered with SQLAlchemy Base
 # This must happen before create_all() is called
@@ -69,6 +69,10 @@ class DatabaseEngineProvider:
             TefasFundBreakdown.__tablename__,
             'download_history',  # Shared history table
             'download_progress_log',  # Shared progress log
+            'analysis_results',  # Analysis results cache
+            'user_analysis_history',  # User analysis history
+            'analysis_tasks',  # Analysis task tracking
+            'analysis_progress_log',  # Analysis progress logs
         ]
         
         # Add stock tables if stock models are available

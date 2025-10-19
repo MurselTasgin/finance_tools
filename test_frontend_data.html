@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test ETF Scan Data</title>
+</head>
+<body>
+    <h1>ETF Scan Data Test</h1>
+    <div id="output"></div>
+    
+    <script>
+        // Test data structure that should be coming from the API
+        const testData = {
+            analysis_type: 'etf_scan',
+            analysis_name: 'ETF Scan Analysis',
+            results: [
+                {
+                    code: 'AAL',
+                    recommendation: 'BUY',
+                    score: 1.5,
+                    reasons: [
+                        'RSI above 70.0 (overbought)',
+                        'Total Score: 1.500',
+                        'Score Contributions:',
+                        '  • Rsi: 1.500 (weight: 1.5)',
+                        'Recommendation: BUY (score 1.500 >= threshold 1.0)'
+                    ],
+                    components: {
+                        'ema_price': 0.0,
+                        'ema_cross': 0.0,
+                        'macd': 0.0,
+                        'rsi': 1.5,
+                        'momentum': 0.0,
+                        'momentum_daily': 0.0,
+                        'supertrend': 0.0
+                    },
+                    indicators_snapshot: {
+                        'price_ema_20': null,
+                        'price_ema_50': null,
+                        'price_macd': null,
+                        'price_macd_signal': null,
+                        'price_rsi_14': 100.0
+                    },
+                    timestamp: '2025-10-20T00:01:52',
+                    last_value: 1.234
+                }
+            ],
+            result_count: 1
+        };
+        
+        // Display the data structure
+        const output = document.getElementById('output');
+        output.innerHTML = `
+            <h2>Data Structure Test</h2>
+            <h3>First Result Keys:</h3>
+            <ul>
+                ${Object.keys(testData.results[0]).map(key => `<li>${key}</li>`).join('')}
+            </ul>
+            
+            <h3>Components:</h3>
+            <pre>${JSON.stringify(testData.results[0].components, null, 2)}</pre>
+            
+            <h3>Reasons:</h3>
+            <ul>
+                ${testData.results[0].reasons.map(reason => `<li>${reason}</li>`).join('')}
+            </ul>
+            
+            <h3>Indicators Snapshot:</h3>
+            <pre>${JSON.stringify(testData.results[0].indicators_snapshot, null, 2)}</pre>
+        `;
+    </script>
+</body>
+</html>

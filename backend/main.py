@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 import asyncio
 import threading
 import time
+import uuid
 from typing import List, Optional, Dict, Any
 import pandas as pd
 from datetime import date, datetime, timedelta
@@ -78,6 +79,30 @@ active_tasks = {}
 
 # Store cancellation flags for tasks
 cancellation_flags = {}
+
+# Global state for analysis task progress
+analysis_progress = {
+    "is_running": False,
+    "progress": 0,
+    "progress_percent": 0,
+    "status": "",
+    "progress_message": "",
+    "current_step": 0,
+    "total_steps": 0,
+    "analysis_type": None,
+    "task_id": None,
+    "error": None,
+    "start_time": None,
+}
+
+# Store active analysis tasks
+active_analysis_tasks = {}
+
+# Store cancellation flags for analysis tasks
+analysis_cancellation_flags = {}
+
+# Locks for thread-safe access to analysis state
+analysis_progress_lock = threading.Lock()
 
 # Track if startup cleanup has been done
 startup_cleanup_done = False
@@ -1488,6 +1513,943 @@ async def get_stock_stats(session = Depends(get_db_session)):
         }
     except Exception as e:
         logger.error(f"Error getting stock stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ===== ANALYTICS API ENDPOINTS =====
+
+# Import analytics service
+from finance_tools.analytics.service import AnalyticsService
+
+# Global analytics service instance
+analytics_service = AnalyticsService()
+
+# Helper function to check if an analysis task was cancelled
+def is_analysis_cancelled(task_id: str) -> bool:
+    """Check if an analysis task has been cancelled."""
+    return task_id in analysis_cancellation_flags and analysis_cancellation_flags[task_id]["cancelled"]
+
+
+# Thread function for running analysis in background
+def run_analysis_sync(analysis_type: str, analysis_name: str, parameters: dict, task_id: str, session_factory):
+    """
+    Synchronous function to run analysis in background thread.
+    
+    Supports all analysis types:
+    - 'etf_technical': ETF technical analysis
+    - 'etf_scan': ETF scan analysis
+    - 'stock_technical': Stock technical analysis
+    """
+    global analysis_progress, active_analysis_tasks, analysis_progress_lock
+    
+    logger.info(f"🚀 ANALYSIS TASK STARTED - Task ID: {task_id}, Type: {analysis_type}")
+    
+    if is_analysis_cancelled(task_id):
+        logger.info(f"❌ Analysis task {task_id} was cancelled before starting")
+        return
+    
+    start_time = time.time()
+    result_id = None
+    
+    def log_progress(message: str, progress_percent: int, message_type: str = 'info'):
+        """Helper function to log progress to database and update global state"""
+        try:
+            from finance_tools.etfs.tefas.models import AnalysisProgressLog
+            
+            # Log to database
+            progress_log = AnalysisProgressLog(
+                task_id=task_id,
+                timestamp=datetime.utcnow(),
+                message=message,
+                message_type=message_type,
+                progress_percent=progress_percent,
+            )
+            session.add(progress_log)
+            session.commit()
+            
+            # Update global progress
+            with analysis_progress_lock:
+                analysis_progress.update({
+                    "is_running": True,
+                    "progress": progress_percent,
+                    "progress_percent": progress_percent,
+                    "progress_message": message,
+                    "analysis_type": analysis_type,
+                    "task_id": task_id,
+                    "start_time": datetime.now().isoformat(),
+                    "error": None,
+                })
+            
+            logger.info(f"📝 [{progress_percent}%] {message}")
+        except Exception as e:
+            logger.error(f"❌ Failed to log progress: {e}")
+    
+    try:
+        session = session_factory()
+        
+        try:
+            from finance_tools.etfs.tefas.models import AnalysisTask
+            
+            # Create analysis task record with enhanced parameters for ETF scan
+            enhanced_parameters = parameters.copy()
+            if analysis_type == 'etf_scan' and 'scanners' in parameters:
+                # Add scanner details to parameters for ETF scan analysis
+                enhanced_parameters.update({
+                    'scanners': parameters.get('scanners', []),
+                    'scanner_configs': parameters.get('scanner_configs', {}),
+                    'weights': parameters.get('weights', {}),
+                    'actual_parameters': parameters.get('actual_parameters', {}),
+                    'scanner_summary': parameters.get('scanner_summary', {})
+                })
+            
+            db_task = AnalysisTask(
+                task_id=task_id,
+                analysis_type=analysis_type,
+                analysis_name=analysis_name,
+                parameters=enhanced_parameters,
+                status='running',
+                progress_percent=0,
+                progress_message='Initializing...',
+                start_time=datetime.utcnow(),
+            )
+            session.add(db_task)
+            session.commit()
+            logger.info(f"✅ Created analysis task record for Task ID: {task_id}")
+            
+            # Log initial progress
+            log_progress("Analysis task initialized", 5, 'info')
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to create analysis task record: {e}")
+            raise
+        
+        try:
+            if is_analysis_cancelled(task_id):
+                raise Exception("Task was cancelled")
+            
+            analysis_result = None
+            
+            if analysis_type == 'etf_technical':
+                logger.info(f"📊 Starting ETF technical analysis...")
+                log_progress("Starting ETF technical analysis", 10, 'info')
+                
+                analysis_result = analytics_service.run_etf_technical_analysis(
+                    db_session=session,
+                    codes=parameters.get('codes'),
+                    start_date=parameters.get('start_date'),
+                    end_date=parameters.get('end_date'),
+                    column=parameters.get('column', 'price'),
+                    ema_short=parameters.get('ema_short', 20),
+                    ema_long=parameters.get('ema_long', 50),
+                    rsi_window=parameters.get('rsi_window', 14),
+                    macd_fast=parameters.get('macd_fast', 12),
+                    macd_slow=parameters.get('macd_slow', 26),
+                    macd_sign=parameters.get('macd_sign', 9),
+                    save_results=False,  # Don't save here - backend will save after this returns
+                )
+                
+                log_progress("ETF technical analysis completed", 80, 'success')
+                
+            elif analysis_type == 'etf_scan':
+                logger.info(f"📊 Starting ETF scan analysis...")
+                log_progress("Starting ETF scan analysis", 10, 'info')
+                
+                analysis_result = analytics_service.run_etf_scan_analysis(
+                    db_session=session,
+                    fund_type=parameters.get('fund_type'),
+                    specific_codes=parameters.get('specific_codes'),
+                    start_date=parameters.get('start_date'),
+                    end_date=parameters.get('end_date'),
+                    column=parameters.get('column', 'price'),
+                    ema_short=parameters.get('ema_short', 20),
+                    ema_long=parameters.get('ema_long', 50),
+                    rsi_window=parameters.get('rsi_window', 14),
+                    rsi_lower=parameters.get('rsi_lower', 30),
+                    rsi_upper=parameters.get('rsi_upper', 70),
+                    macd_fast=parameters.get('macd_fast', 12),
+                    macd_slow=parameters.get('macd_slow', 26),
+                    macd_sign=parameters.get('macd_sign', 9),
+                    weights=parameters.get('weights', {}),
+                    score_threshold=parameters.get('score_threshold', 50),
+                    include_keywords=parameters.get('include_keywords', []),
+                    exclude_keywords=parameters.get('exclude_keywords', []),
+                    case_sensitive=parameters.get('case_sensitive', False),
+                    scanners=parameters.get('scanners', ['ema', 'macd', 'rsi']),
+                    scanner_configs=parameters.get('scanner_configs', {}),
+                    save_results=False,  # Don't save here - backend will save after this returns
+                )
+                
+                log_progress("ETF scan analysis completed", 80, 'success')
+                
+            elif analysis_type == 'stock_technical':
+                logger.info(f"📊 Starting stock technical analysis...")
+                log_progress("Starting stock technical analysis", 10, 'info')
+                
+                analysis_result = analytics_service.run_stock_technical_analysis(
+                    db_session=session,
+                    symbols=parameters.get('symbols', []),
+                    start_date=parameters.get('start_date'),
+                    end_date=parameters.get('end_date'),
+                    indicators=parameters.get('indicators', ['ema', 'rsi', 'macd']),
+                    ema_short=parameters.get('ema_short', 12),
+                    ema_long=parameters.get('ema_long', 26),
+                    rsi_period=parameters.get('rsi_period', 14),
+                    bb_period=parameters.get('bb_period', 20),
+                    bb_std=parameters.get('bb_std', 2),
+                    save_results=False,  # Don't save here - backend will save after this returns
+                )
+                
+                log_progress("Stock technical analysis completed", 80, 'success')
+            else:
+                raise ValueError(f"Unknown analysis type: {analysis_type}")
+            
+            if is_analysis_cancelled(task_id):
+                raise Exception("Task was cancelled")
+            
+            # Save results to database
+            execution_time_ms = int((time.time() - start_time) * 1000)
+            log_progress("Saving analysis results", 90, 'info')
+            
+            try:
+                from finance_tools.etfs.tefas.models import AnalysisResult
+                import math
+                import copy
+                
+                # Helper function to clean NaN and Inf values for JSON serialization
+                def clean_for_json(obj):
+                    """Clean data for JSON serialization by replacing nan and inf values."""
+                    if isinstance(obj, dict):
+                        return {k: clean_for_json(v) for k, v in obj.items()}
+                    elif isinstance(obj, list):
+                        return [clean_for_json(item) for item in obj]
+                    elif isinstance(obj, float):
+                        if math.isnan(obj):
+                            return None
+                        elif math.isinf(obj):
+                            return None
+                        else:
+                            return obj
+                    else:
+                        return obj
+                
+                # Use the complete analysis_result from the service (which already has all fields properly formatted)
+                # Don't reconstruct it here - just use it directly to preserve components, indicators_snapshot, etc.
+                if analysis_result:
+                    # The analytics_service already returns properly formatted data
+                    # Just use it as-is to preserve all fields (components, indicators_snapshot, reasons)
+                    # But clean NaN/Inf values for JSON compliance
+                    results_data = clean_for_json(copy.deepcopy(analysis_result))
+                else:
+                    # Fallback if no result
+                    results_data = {
+                        'analysis_type': analysis_type,
+                        'analysis_name': analysis_name,
+                        'parameters': parameters,
+                        'execution_time_ms': execution_time_ms,
+                        'timestamp': datetime.utcnow().isoformat(),
+                        'results': [],
+                        'result_count': 0,
+                    }
+                
+                # Save analysis result
+                db_result = AnalysisResult(
+                    analysis_type=analysis_type,
+                    analysis_name=analysis_name,
+                    parameters=parameters,
+                    results_data=results_data,
+                    result_count=analysis_result.get('result_count', 0) if analysis_result else 0,
+                    execution_time_ms=execution_time_ms,
+                    status='completed',
+                    created_at=datetime.utcnow(),
+                )
+                session.add(db_result)
+                session.commit()
+                result_id = db_result.id
+                logger.info(f"✅ Saved analysis result with ID: {result_id} (preserving all fields from analytics_service)")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to save analysis result: {e}")
+                raise
+            
+            # Update task status to completed
+            try:
+                from finance_tools.etfs.tefas.models import AnalysisTask
+                db_task = session.query(AnalysisTask).filter_by(task_id=task_id).first()
+                if db_task:
+                    db_task.status = 'completed'
+                    db_task.progress_percent = 100
+                    db_task.progress_message = 'Analysis completed successfully'
+                    db_task.end_time = datetime.utcnow()
+                    db_task.result_id = result_id
+                    
+                    # Update task parameters with enhanced scanner details if available
+                    if analysis_type == 'etf_scan' and analysis_result and 'parameters' in analysis_result:
+                        enhanced_params = analysis_result['parameters']
+                        if 'scanners' in enhanced_params or 'scanner_configs' in enhanced_params:
+                            db_task.parameters = enhanced_params
+                            logger.info(f"✅ Updated task parameters with scanner details for Task ID: {task_id}")
+                    
+                    session.commit()
+                    logger.info(f"✅ Updated task status to completed for Task ID: {task_id}")
+            except Exception as e:
+                logger.error(f"❌ Failed to update task status: {e}")
+            
+            # Final progress update
+            log_progress("Analysis completed successfully", 100, 'success')
+            
+            logger.info(f"✅ ANALYSIS COMPLETED - Task ID: {task_id}, Time: {execution_time_ms}ms, Results: {analysis_result.get('result_count', 0) if analysis_result else 0}")
+            
+        finally:
+            session.close()
+    
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"❌ ANALYSIS FAILED - Task ID: {task_id}, Error: {error_msg}")
+        
+        # Update task status to failed
+        try:
+            session = session_factory()
+            from finance_tools.etfs.tefas.models import AnalysisTask
+            
+            db_task = session.query(AnalysisTask).filter_by(task_id=task_id).first()
+            if db_task:
+                db_task.status = 'failed'
+                db_task.progress_percent = 100
+                db_task.progress_message = f'Analysis failed: {error_msg}'
+                db_task.error_message = error_msg
+                db_task.error_type = type(e).__name__
+                db_task.end_time = datetime.utcnow()
+                session.commit()
+                logger.info(f"✅ Updated task status to failed for Task ID: {task_id}")
+            session.close()
+        except Exception as update_error:
+            logger.error(f"❌ Failed to update task status after error: {update_error}")
+        
+        # Update global progress
+        with analysis_progress_lock:
+            analysis_progress.update({
+                "is_running": False,
+                "progress": 100,
+                "progress_percent": 100,
+                "progress_message": f"Analysis failed: {error_msg}",
+                "error": error_msg,
+            })
+    
+    finally:
+        # Clean up task from active tasks
+        if task_id in active_analysis_tasks:
+            del active_analysis_tasks[task_id]
+            logger.info(f"🧹 Cleaned up active task reference for Task ID: {task_id}")
+
+
+# Analysis Task Management Endpoints
+
+@app.post("/api/analytics/run")
+async def start_analysis_task(request: Dict[str, Any]):
+    """
+    Start an analysis task in background.
+    
+    Request body:
+    {
+        "analysis_type": "etf_technical|etf_scan|stock_technical",
+        "analysis_name": "Human readable name",
+        "parameters": { ... analysis-specific parameters ... }
+    }
+    """
+    global analysis_progress, active_analysis_tasks, analysis_cancellation_flags, analysis_progress_lock
+    
+    try:
+        analysis_type = request.get("analysis_type")
+        analysis_name = request.get("analysis_name", "Analysis")
+        parameters = request.get("parameters", {})
+        
+        if not analysis_type:
+            raise HTTPException(status_code=400, detail="analysis_type is required")
+        
+        task_id = str(uuid.uuid4())
+        
+        with analysis_progress_lock:
+            analysis_progress.update({
+                "is_running": True,
+                "progress": 0,
+                "progress_percent": 0,
+                "status": "Starting analysis...",
+                "progress_message": "Initializing...",
+                "analysis_type": analysis_type,
+                "task_id": task_id,
+                "start_time": datetime.now().isoformat(),
+                "error": None,
+            })
+        
+        analysis_cancellation_flags[task_id] = {"cancelled": False}
+        
+        db_provider = DatabaseEngineProvider()
+        db_provider.ensure_initialized()
+        session_factory = db_provider.get_session_factory()
+        
+        logger.info(f"🚀 Submitting analysis task - Task ID: {task_id}, Type: {analysis_type}")
+        future = executor.submit(run_analysis_sync, analysis_type, analysis_name, parameters, task_id, session_factory)
+        
+        active_analysis_tasks[task_id] = {
+            "future": future,
+            "start_time": datetime.now(),
+            "analysis_type": analysis_type,
+            "analysis_name": analysis_name,
+            "parameters": parameters,
+        }
+        
+        logger.info(f"📋 Analysis task stored - Task ID: {task_id}, Active tasks: {len(active_analysis_tasks)}")
+        
+        return {
+            "task_id": task_id,
+            "message": "Analysis started in background",
+            "analysis_type": analysis_type,
+            "analysis_name": analysis_name,
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting analysis task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/progress")
+async def get_analysis_progress():
+    """Get current analysis progress."""
+    with analysis_progress_lock:
+        return analysis_progress.copy()
+
+
+@app.get("/api/analytics/tasks")
+async def get_active_analysis_tasks():
+    """Get list of active analysis tasks."""
+    try:
+        active_count = len(active_analysis_tasks)
+        tasks_list = []
+        
+        for task_id, task_info in active_analysis_tasks.items():
+            tasks_list.append({
+                "task_id": task_id,
+                "analysis_type": task_info.get("analysis_type"),
+                "analysis_name": task_info.get("analysis_name"),
+                "start_time": task_info.get("start_time").isoformat() if task_info.get("start_time") else None,
+            })
+        
+        return {
+            "active_tasks": active_count,
+            "tasks": tasks_list,
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting active analysis tasks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/history")
+async def get_analysis_history(
+    analysis_type: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    page: int = 1,
+    session = Depends(get_db_session)
+):
+    """Get analysis task history with filtering and pagination."""
+    try:
+        from finance_tools.etfs.tefas.models import AnalysisTask
+        from sqlalchemy import desc
+        
+        query = session.query(AnalysisTask)
+        
+        if analysis_type:
+            query = query.filter_by(analysis_type=analysis_type)
+        if status:
+            query = query.filter_by(status=status)
+        
+        total = query.count()
+        offset = (page - 1) * limit
+        tasks = query.order_by(desc(AnalysisTask.created_at)).offset(offset).limit(limit).all()
+        
+        tasks_data = []
+        for task in tasks:
+            exec_time = None
+            if task.start_time and task.end_time:
+                exec_time = int((task.end_time - task.start_time).total_seconds() * 1000)
+            
+            tasks_data.append({
+                "id": task.id,
+                "task_id": task.task_id,
+                "analysis_type": task.analysis_type,
+                "analysis_name": task.analysis_name,
+                "status": task.status,
+                "progress_percent": task.progress_percent,
+                "progress_message": task.progress_message,
+                "start_time": task.start_time.isoformat() if task.start_time else None,
+                "end_time": task.end_time.isoformat() if task.end_time else None,
+                "execution_time_ms": exec_time,
+                "error_message": task.error_message,
+                "result_id": task.result_id,
+            })
+        
+        return {
+            "tasks": tasks_data,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": (total + limit - 1) // limit,
+        }
+    
+    except Exception as e:
+        logger.error(f"Error getting analysis history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/analytics/cancel/{task_id}")
+async def cancel_analysis_task(task_id: str):
+    """Cancel a running analysis task."""
+    global analysis_cancellation_flags
+    
+    try:
+        if task_id not in analysis_cancellation_flags:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        
+        analysis_cancellation_flags[task_id]["cancelled"] = True
+        logger.info(f"🛑 Set cancellation flag for analysis task {task_id}")
+        
+        try:
+            from finance_tools.etfs.tefas.models import AnalysisTask
+            
+            db_provider = DatabaseEngineProvider()
+            db_provider.ensure_initialized()
+            session_factory = db_provider.get_session_factory()
+            
+            with session_factory() as session:
+                db_task = session.query(AnalysisTask).filter_by(task_id=task_id).first()
+                if db_task and db_task.status == 'running':
+                    db_task.status = 'cancelled'
+                    db_task.progress_message = 'Task was cancelled by user'
+                    db_task.end_time = datetime.utcnow()
+                    session.commit()
+                    logger.info(f"✅ Updated task status to cancelled for Task ID: {task_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to update task status after cancellation: {e}")
+        
+        return {
+            "message": "Analysis task cancelled",
+            "task_id": task_id,
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling analysis task: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/task-details/{task_id}")
+async def get_analysis_task_details(task_id: str, session = Depends(get_db_session)):
+    """Get detailed information about an analysis task."""
+    try:
+        from finance_tools.etfs.tefas.models import AnalysisTask, AnalysisProgressLog
+        
+        task = session.query(AnalysisTask).filter_by(task_id=task_id).first()
+        if not task:
+            raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        
+        logs = session.query(AnalysisProgressLog).filter_by(task_id=task_id)            .order_by(AnalysisProgressLog.timestamp).all()
+        
+        logs_data = []
+        for log in logs:
+            logs_data.append({
+                "id": log.id,
+                "timestamp": log.timestamp.isoformat(),
+                "message": log.message,
+                "message_type": log.message_type,
+                "progress_percent": log.progress_percent,
+            })
+        
+        exec_time = None
+        if task.start_time and task.end_time:
+            exec_time = int((task.end_time - task.start_time).total_seconds() * 1000)
+        elif task.start_time:
+            exec_time = int((datetime.utcnow() - task.start_time).total_seconds() * 1000)
+        
+        task_info = {
+            "id": task.id,
+            "task_id": task.task_id,
+            "analysis_type": task.analysis_type,
+            "analysis_name": task.analysis_name,
+            "status": task.status,
+            "progress_percent": task.progress_percent,
+            "progress_message": task.progress_message,
+            "start_time": task.start_time.isoformat() if task.start_time else None,
+            "end_time": task.end_time.isoformat() if task.end_time else None,
+            "execution_time_ms": exec_time,
+            "error_message": task.error_message,
+            "result_id": task.result_id,
+            "parameters": task.parameters,  # Include parameters for scanner details
+        }
+        
+        stats = {
+            "total_logs": len(logs),
+            "success_logs": sum(1 for log in logs if log.message_type == 'success'),
+            "error_logs": sum(1 for log in logs if log.message_type == 'error'),
+        }
+        
+        return {
+            "task_info": task_info,
+            "progress_logs": logs_data,
+            "statistics": stats,
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting analysis task details: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/analytics/etf/technical")
+async def run_etf_technical_analysis(
+    request: Dict[str, Any],
+    session = Depends(get_db_session)
+):
+    """
+    Run ETF technical analysis.
+
+    Request body:
+    {
+        "codes": ["NNF", "YAC"],
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "column": "price",
+        "indicators": {
+            "ema": {"windows": [20, 50]},
+            "rsi": {"window": 14}
+        },
+        "include_keywords": ["fon"],
+        "exclude_keywords": ["emeklilik"],
+        "case_sensitive": false,
+        "user_id": "user123"
+    }
+    """
+    try:
+        result = analytics_service.run_etf_technical_analysis(
+            db_session=session,
+            **request
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error in ETF technical analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/analytics/etf/scan")
+async def run_etf_scan_analysis(
+    request: Dict[str, Any],
+    session = Depends(get_db_session)
+):
+    """
+    Run ETF scan analysis for buy/sell/hold recommendations.
+
+    Request body:
+    {
+        "codes": ["NNF", "YAC"],
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "column": "price",
+        "ema_short": 20,
+        "ema_long": 50,
+        "rsi_window": 14,
+        "rsi_lower": 30.0,
+        "rsi_upper": 70.0,
+        "buy_threshold": 1.0,
+        "sell_threshold": 1.0,
+        "user_id": "user123"
+    }
+    """
+    try:
+        result = analytics_service.run_etf_scan_analysis(
+            db_session=session,
+            **request
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error in ETF scan analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/analytics/stock/technical")
+async def run_stock_technical_analysis(
+    request: Dict[str, Any],
+    session = Depends(get_db_session)
+):
+    """
+    Run stock technical analysis.
+
+    Request body:
+    {
+        "symbols": ["AAPL", "MSFT"],
+        "indicators": ["EMA", "RSI", "MACD"],
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "ema_periods": [12, 26, 50],
+        "rsi_period": 14,
+        "user_id": "user123"
+    }
+    """
+    try:
+        result = analytics_service.run_stock_technical_analysis(
+            db_session=session,
+            **request
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error in stock technical analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/capabilities")
+async def get_analytics_capabilities():
+    """
+    Get available analytics capabilities and functions.
+    """
+    try:
+        capabilities = {
+            "etf_analytics": {
+                "technical_analysis": {
+                    "description": "Technical indicators for ETF data (EMA, RSI, MACD, momentum, supertrend)",
+                    "supported_columns": ["price", "market_cap", "number_of_investors", "number_of_shares"],
+                    "supported_indicators": {
+                        "ema": {"windows": "List of EMA windows (e.g., [20, 50])"},
+                        "rsi": {"window": "RSI calculation window (e.g., 14)"},
+                        "macd": {"window_slow": 26, "window_fast": 12, "window_sign": 9},
+                        "momentum": {"windows": "List of momentum windows (e.g., [30, 60, 90, 180, 360])"},
+                        "daily_momentum": {"windows": "List of daily momentum windows"},
+                        "supertrend": {"hl_factor": 0.05, "atr_period": 10, "multiplier": 3.0}
+                    },
+                    "filtering": {
+                        "include_keywords": "List of keywords to include in fund titles",
+                        "exclude_keywords": "List of keywords to exclude from fund titles",
+                        "case_sensitive": "Boolean for case-sensitive matching"
+                    }
+                },
+                "scan_analysis": {
+                    "description": "ETF scanning with weighted scoring for buy/sell/hold recommendations",
+                    "scoring_weights": {
+                        "w_ema_cross": "EMA crossover weight",
+                        "w_macd": "MACD weight",
+                        "w_rsi": "RSI weight",
+                        "w_momentum": "Momentum weight",
+                        "w_momentum_daily": "Daily momentum weight",
+                        "w_supertrend": "Supertrend weight"
+                    },
+                    "thresholds": {
+                        "buy_threshold": "Minimum score for BUY recommendation",
+                        "sell_threshold": "Maximum score for SELL recommendation (negative)"
+                    }
+                }
+            },
+            "stock_analytics": {
+                "technical_analysis": {
+                    "description": "Technical indicators for stock data",
+                    "supported_indicators": [
+                        "EMA", "SMA", "RSI", "MACD", "BB", "STOCH", "MOMENTUM", "ROC", "ATR", "CCI"
+                    ],
+                    "configurable_parameters": {
+                        "ema_periods": "EMA calculation periods",
+                        "rsi_period": "RSI calculation period",
+                        "macd_fast": "MACD fast EMA period",
+                        "macd_slow": "MACD slow EMA period",
+                        "macd_signal": "MACD signal line period",
+                        "bb_period": "Bollinger Bands period",
+                        "bb_std": "Bollinger Bands standard deviation multiplier"
+                    }
+                }
+            },
+            "caching": {
+                "enabled": True,
+                "ttl_hours": 24,
+                "description": "Analysis results are cached for 24 hours to improve performance"
+            },
+            "history_tracking": {
+                "enabled": True,
+                "description": "All analysis executions are tracked for user history and favorites"
+            }
+        }
+
+        return capabilities
+
+    except Exception as e:
+        logger.error(f"Error getting analytics capabilities: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/history")
+async def get_analysis_history(
+    user_id: Optional[str] = None,
+    analysis_type: Optional[str] = None,
+    limit: int = 50,
+    session = Depends(get_db_session)
+):
+    """
+    Get analysis history.
+
+    Query parameters:
+    - user_id: Filter by user ID (optional)
+    - analysis_type: Filter by analysis type (optional)
+    - limit: Maximum number of records (default: 50)
+    """
+    try:
+        history = analytics_service.get_analysis_history(
+            db_session=session,
+            user_id=user_id,
+            analysis_type=analysis_type,
+            limit=limit
+        )
+        return {"history": history}
+    except Exception as e:
+        logger.error(f"Error getting analysis history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/cache")
+async def get_cached_results(
+    analysis_type: Optional[str] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
+    page: int = 1,
+    limit: int = 20,
+    session = Depends(get_db_session)
+):
+    """
+    Get cached analysis results with pagination and filtering.
+
+    Query parameters:
+    - analysis_type: Filter by analysis type (optional)
+    - status: Filter by status (completed, failed, etc.)
+    - search: Search in analysis name or parameters
+    - page: Page number (default: 1)
+    - limit: Results per page (default: 20, max: 100)
+    """
+    try:
+        from finance_tools.etfs.tefas.models import AnalysisResult
+        from sqlalchemy import desc, or_, func
+        
+        # Limit max page size
+        limit = min(limit, 100)
+        offset = (page - 1) * limit
+        
+        # Build query
+        query = session.query(AnalysisResult)
+        
+        # Apply filters
+        if analysis_type:
+            query = query.filter(AnalysisResult.analysis_type == analysis_type)
+        
+        if status:
+            query = query.filter(AnalysisResult.status == status)
+        
+        # Apply search if provided
+        if search:
+            search_pattern = f"%{search}%"
+            query = query.filter(
+                or_(
+                    AnalysisResult.analysis_name.ilike(search_pattern),
+                    func.json_extract(AnalysisResult.parameters, '$.codes').like(search_pattern),
+                    func.json_extract(AnalysisResult.parameters, '$.specific_codes').like(search_pattern),
+                    func.json_extract(AnalysisResult.parameters, '$.symbols').like(search_pattern),
+                )
+            )
+        
+        # Only return non-expired results
+        now = datetime.utcnow()
+        query = query.filter(
+            (AnalysisResult.expires_at.is_(None)) | (AnalysisResult.expires_at > now)
+        )
+        
+        # Get total count before pagination
+        total = query.count()
+        
+        # Order by most recent first and apply pagination
+        results = query.order_by(desc(AnalysisResult.created_at)).offset(offset).limit(limit).all()
+        
+        cached_results = [
+            {
+                "id": result.id,
+                "analysis_type": result.analysis_type,
+                "analysis_name": result.analysis_name,
+                "parameters": result.parameters,
+                "result_count": result.result_count,
+                "execution_time_ms": result.execution_time_ms,
+                "status": result.status,
+                "created_at": result.created_at.isoformat(),
+                "expires_at": result.expires_at.isoformat() if result.expires_at else None
+            }
+            for result in results
+        ]
+        
+        return {
+            "results": cached_results,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "pages": (total + limit - 1) // limit if limit > 0 else 0
+        }
+    except Exception as e:
+        logger.error(f"Error getting cached results: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/results/{result_id}")
+async def get_analysis_result(result_id: int, session = Depends(get_db_session)):
+    """
+    Get analysis results by result ID.
+    """
+    try:
+        from finance_tools.etfs.tefas.models import AnalysisResult
+        import math
+        
+        # Helper function to clean NaN and Inf values for JSON serialization
+        def clean_for_json(obj):
+            """Clean data for JSON serialization by replacing nan and inf values."""
+            if isinstance(obj, dict):
+                return {k: clean_for_json(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [clean_for_json(item) for item in obj]
+            elif isinstance(obj, float):
+                if math.isnan(obj):
+                    return None
+                elif math.isinf(obj):
+                    return None
+                else:
+                    return obj
+            else:
+                return obj
+        
+        result = session.query(AnalysisResult).filter_by(id=result_id).first()
+        if not result:
+            raise HTTPException(status_code=404, detail=f"Analysis result {result_id} not found")
+        
+        # Clean the data before returning to handle any NaN values in old records
+        cleaned_results = clean_for_json(result.results_data.get('results', []) if result.results_data else [])
+        cleaned_metadata = clean_for_json(result.results_data.get('metadata', {}) if result.results_data else {})
+        
+        return {
+            "id": result.id,
+            "analysis_type": result.analysis_type,
+            "analysis_name": result.analysis_name,
+            "parameters": result.parameters,
+            "results": cleaned_results,
+            "result_count": result.result_count,
+            "execution_time_ms": result.execution_time_ms,
+            "timestamp": result.created_at.isoformat(),
+            "metadata": cleaned_metadata
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting analysis result {result_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

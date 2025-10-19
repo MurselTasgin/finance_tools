@@ -5,7 +5,7 @@ Database models for TEFAS data using SQLAlchemy ORM.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy import String, Integer, Float, Date, DateTime, Text, JSON
@@ -159,27 +159,209 @@ class DownloadHistory(Base):
 class DownloadProgressLog(Base):
     """
     Unified detailed progress log for both TEFAS and Stock download tasks.
-    
+
     Fields usage:
     - TEFAS: item_name=fund_name, chunk_number=chunk number
     - Stock: item_name=symbol, chunk_number=symbol index
     """
-    
+
     __tablename__ = "download_progress_log"
-    
+
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     task_id: Mapped[str] = mapped_column(String(36), index=True)  # UUID
     timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
     message_type: Mapped[str] = mapped_column(String(20), nullable=False)  # info, success, warning, error
     progress_percent: Mapped[int] = mapped_column(Integer, default=0)
-    
+
     # Chunk or item number
     chunk_number: Mapped[int] = mapped_column(Integer, default=0)
     records_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Records in this message
-    
+
     # Item name: fund code for TEFAS, stock symbol for stocks
     item_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        {"sqlite_autoincrement": True},
+    )
+
+
+class AnalysisResult(Base):
+    """
+    Store analysis results for caching and history.
+
+    Supports both ETF and Stock analytics with flexible JSON storage
+    for different result types and parameters.
+    """
+
+    __tablename__ = "analysis_results"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    analysis_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)  # 'etf_technical', 'etf_scan', 'stock_technical'
+    analysis_name: Mapped[str] = mapped_column(String(100), nullable=False)  # Human-readable name
+
+    # Parameters used for the analysis (JSON)
+    parameters: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # Results data (JSON) - flexible storage for different result types
+    results_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # Metadata
+    result_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Number of items in results
+    execution_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Status tracking
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default='completed')  # completed, failed, running
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Caching and expiration
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)  # For cache expiry
+
+    # User tracking (for future multi-user support)
+    user_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+
+    # Indexing for performance
+    __table_args__ = (
+        {"sqlite_autoincrement": True},
+    )
+
+
+class UserAnalysisHistory(Base):
+    """
+    Track user analysis history for analytics dashboard.
+
+    Records each analysis execution for history, favorites, and quick re-run.
+    """
+
+    __tablename__ = "user_analysis_history"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+
+    # Analysis details
+    analysis_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    analysis_name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+    # Parameters used (JSON)
+    parameters: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
+    # Execution tracking
+    executed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    execution_time_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Result reference (links to AnalysisResult if saved)
+    result_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # User interaction tracking
+    is_favorite: Mapped[bool] = mapped_column(Integer, default=0)  # SQLite boolean
+    access_count: Mapped[int] = mapped_column(Integer, default=1)
+
+    # Metadata
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        {"sqlite_autoincrement": True},
+    )
+
+
+class AnalysisTask(Base):
+    """
+    Track analysis task execution for both ETF and Stock analytics.
+    
+    Supports background task management with real-time progress tracking,
+    cancellation, and detailed logging for all analysis types.
+    
+    Fields usage:
+    - ETF Technical: analysis_type='etf_technical', parameters={codes, start_date, end_date, ...}
+    - ETF Scan: analysis_type='etf_scan', parameters={fund_type, codes, ...}
+    - Stock Technical: analysis_type='stock_technical', parameters={symbols, start_date, ...}
+    """
+    
+    __tablename__ = "analysis_tasks"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(36), unique=True, index=True)  # UUID
+    
+    # Analysis identification
+    analysis_type: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    # Possible values: 'etf_technical', 'etf_scan', 'stock_technical', etc.
+    
+    analysis_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Human-readable name: "ETF Technical Analysis", "ETF Scan Analysis", etc.
+    
+    # Execution parameters (JSON)
+    parameters: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    
+    # Status tracking
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default='running')
+    # Possible values: 'running', 'completed', 'failed', 'cancelled'
+    
+    # Progress tracking
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0)  # 0-100
+    progress_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Step tracking for detailed progress
+    total_steps: Mapped[int] = mapped_column(Integer, default=0)
+    current_step: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # Timing
+    start_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    end_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    
+    # Error handling
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    
+    # Results reference
+    result_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Links to AnalysisResult table if results are saved
+    
+    # User tracking (for future multi-user support)
+    user_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    
+    # Metadata
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        {"sqlite_autoincrement": True},
+    )
+
+
+class AnalysisProgressLog(Base):
+    """
+    Detailed progress logs for analysis tasks.
+    
+    Tracks all progress updates, messages, and step completions during analysis execution.
+    Supports both batch and real-time progress reporting.
+    """
+    
+    __tablename__ = "analysis_progress_log"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)  # UUID
+    
+    # Log entry details
+    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    message_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Possible values: 'info', 'progress', 'success', 'warning', 'error'
+    
+    # Progress snapshot at this point in time
+    progress_percent: Mapped[int] = mapped_column(Integer, default=0)
+    current_step: Mapped[int] = mapped_column(Integer, default=0)
+    total_steps: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # Optional: data being processed at this step
+    # For ETF analysis: fund code, for Stock analysis: symbol
+    item_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    item_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    
+    # Optional: items/records counts
+    items_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     
     # Metadata
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

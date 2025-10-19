@@ -5,7 +5,7 @@ import numpy as np
 from typing import Dict, Any, List, Union, Optional
 import time
 
-from .base_tool import BaseTool, ToolResult, ToolArgument, ToolCapability, ToolArgumentType, register_tool
+from ..data_downloaders.base_tool import BaseTool, ToolResult, ToolArgument, ToolCapability, ToolArgumentType, register_tool
 
 
 class TechnicalAnalysisTool(BaseTool):

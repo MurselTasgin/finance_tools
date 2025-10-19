@@ -13,6 +13,7 @@ import {
 import { DataRepository } from './components/DataRepository';
 import { DataExplorer } from './components/DataExplorer';
 import { DataManagement } from './components/DataManagement';
+import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -60,6 +61,7 @@ function App() {
               <Tab label="Data Repository" />
               <Tab label="Data Explorer" />
               <Tab label="Data Management" />
+              <Tab label="Analytics" />
             </Tabs>
           </Box>
           
@@ -73,6 +75,10 @@ function App() {
           
           <TabPanel value={currentTab} index={2}>
             <DataManagement />
+          </TabPanel>
+
+          <TabPanel value={currentTab} index={3}>
+            <AnalyticsDashboard />
           </TabPanel>
         </Paper>
       </Container>
