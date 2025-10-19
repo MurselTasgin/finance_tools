@@ -24,9 +24,13 @@ interface PlotViewerProps {
   data: { x: string | number; y: number; label?: string }[];
   xColumn: string;
   yColumn: string;
+  fundCode?: string;
+  fundTitle?: string;
+  startDate?: string;
+  endDate?: string;
 }
 
-export const PlotViewer: React.FC<PlotViewerProps> = ({ data, xColumn, yColumn }) => {
+export const PlotViewer: React.FC<PlotViewerProps> = ({ data, xColumn, yColumn, fundCode, fundTitle, startDate, endDate }) => {
   if (!data || data.length === 0) {
     return (
       <Alert severity="info">
@@ -169,9 +173,18 @@ export const PlotViewer: React.FC<PlotViewerProps> = ({ data, xColumn, yColumn }
     <Box>
       <Typography variant="h6" gutterBottom>
         {xColumn.replace(/_/g, ' ').toUpperCase()} vs {yColumn.replace(/_/g, ' ').toUpperCase()}
+        {fundCode && (
+          <Typography component="span" variant="body2" color="textSecondary" sx={{ ml: 1 }}>
+            - {fundCode} {fundTitle && `(${fundTitle})`}
+          </Typography>
+        )}
       </Typography>
       <Typography variant="body2" color="textSecondary" gutterBottom>
         {data.length} data points
+        {fundCode && ` for fund ${fundCode}`}
+        {startDate && endDate && ` from ${startDate} to ${endDate}`}
+        {startDate && !endDate && ` from ${startDate} onwards`}
+        {!startDate && endDate && ` up to ${endDate}`}
       </Typography>
       
       <Paper sx={{ p: 2, mt: 2 }}>

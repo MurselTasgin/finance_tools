@@ -249,14 +249,16 @@ If you encounter any issues or have questions, please:
 
 
 * USAGE
+**** IMPORTANT -----
+To run the following commands, you need to install finance_tools, under the main folder i.e. pip install -e . 
 ----> DOWNLOAD DATA =======================================================================
 To download tefas fund data, you can use the following cli command.
 
 = Download Investment funds data (YAT) for the given start & end dates:
-- finance-tools tefas 2025-08-15 2025-08-31 --kind YAT --db ./test_finance_tools.db
+- (cenv312) finance_tools> finance-tools tefas 2025-09-01 2025-10-31 --kind YAT --db ./test_finance_tools.db
 
 = Download pension funds data (EMK) for the given start & end dates:
-- finance-tools tefas 2025-08-15 2025-08-31 --kind EMK --db ./test_finance_tools.db
+- (cenv312) finance_tools>  finance-tools tefas 2025-08-15 2025-08-31 --kind EMK --db ./test_finance_tools.db
 
 
 ---> ETF Analysis ==========================================================================
@@ -271,5 +273,5 @@ finance-tools etf-scan --start 2024-06-01 --end 2025-05-01 --ema-short 20 --ema-
 
 -----> ETF Scanner =========================================================================
 --> FOR INVESTEMENT ETFS
-finance-tools etf-scan --start 2024-07-01 --end 2025-09-04 --exclude EMEKL  --ema-short 20 --ema-long 50 --macd 26 12 9 \
+(cenv312) finance_tools>  finance-tools etf-scan --start 2024-07-01 --end 2025-09-04 --exclude EMEKL  --ema-short 20 --ema-long 50 --macd 26 12 9 \
     --rsi 14 --rsi-lower 30 --rsi-upper 70 --db ./test_finance_tools.db > etf_scan_results_04_Sep_2025.md

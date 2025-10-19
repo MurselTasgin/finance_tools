@@ -7,6 +7,7 @@ import {
   FilterOptions,
   SortOptions,
   DownloadProgress,
+  Fund,
 } from '../types';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8070';
@@ -34,6 +35,102 @@ export const databaseApi = {
 
   getDownloadProgress: async (): Promise<DownloadProgress> => {
     const response = await api.get('/api/database/download-progress');
+    return response.data;
+  },
+
+  getActiveTasks: async (): Promise<{ active_tasks: number; tasks: any[] }> => {
+    const response = await api.get('/api/database/tasks');
+    return response.data;
+  },
+
+  getDownloadHistory: async (params: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    status?: string;
+  } = {}): Promise<{
+    downloads: any[];
+    total: number;
+    page: number;
+    pageSize: number;
+  }> => {
+    const response = await api.get('/api/database/download-history', { params });
+    return response.data;
+  },
+
+  getDownloadStatistics: async (): Promise<{
+    total_downloads: number;
+    successful_downloads: number;
+    failed_downloads: number;
+    total_records_downloaded: number;
+    date_range: {
+      start: string | null;
+      end: string | null;
+    };
+  }> => {
+    const response = await api.get('/api/database/download-statistics');
+    return response.data;
+  },
+
+  getDataDistribution: async (groupBy: string = 'monthly'): Promise<{
+    distribution: Array<{ period: string; count: number }>;
+  }> => {
+    const response = await api.get('/api/database/data-distribution', {
+      params: { groupBy }
+    });
+    return response.data;
+  },
+
+  getFundTypeDistribution: async (): Promise<{
+    distribution: Array<{ name: string; value: number }>;
+  }> => {
+    const response = await api.get('/api/database/fund-type-distribution');
+    return response.data;
+  },
+
+  cancelTask: async (taskId: string): Promise<{ message: string; task_id: string }> => {
+    const response = await api.post(`/api/database/cancel-task/${taskId}`);
+    return response.data;
+  },
+
+  getDownloadTaskDetails: async (taskId: string): Promise<{
+    task_info: {
+      id: number;
+      task_id: string;
+      start_date: string;
+      end_date: string;
+      kind: string;
+      funds: string[];
+      status: string;
+      start_time: string;
+      end_time: string | null;
+      records_downloaded: number;
+      total_records: number;
+      error_message: string | null;
+      created_at: string;
+    };
+    progress_logs: Array<{
+      id: number;
+      task_id: string;
+      timestamp: string;
+      message: string;
+      message_type: string;
+      progress_percent: number;
+      chunk_number: number;
+      records_count: number | null;
+      fund_name: string | null;
+      created_at: string;
+    }>;
+    statistics: {
+      total_messages: number;
+      success_messages: number;
+      error_messages: number;
+      warning_messages: number;
+      total_records_from_logs: number;
+      duration_seconds: number;
+    };
+  }> => {
+    const response = await api.get(`/api/database/download-task-details/${taskId}`);
     return response.data;
   },
 };
@@ -75,15 +172,35 @@ export const dataApi = {
     return response.data;
   },
 
+  getFunds: async (): Promise<Fund[]> => {
+    const response = await api.get('/api/data/funds');
+    return response.data;
+  },
+
   getPlotData: async (
     xColumn: string,
     yColumn: string,
+    fundCode?: string,
+    startDate?: string,
+    endDate?: string,
     filters: FilterOptions[] = []
   ): Promise<{ x: string | number; y: number; label?: string }[]> => {
     const params = new URLSearchParams({
       xColumn,
       yColumn,
     });
+
+    if (fundCode) {
+      params.append('fundCode', fundCode);
+    }
+
+    if (startDate) {
+      params.append('startDate', startDate);
+    }
+
+    if (endDate) {
+      params.append('endDate', endDate);
+    }
 
     filters.forEach((filter, index) => {
       params.append(`filters[${index}][column]`, filter.column);
@@ -95,6 +212,51 @@ export const dataApi = {
     });
 
     const response = await api.get(`/api/data/plot?${params.toString()}`);
+    return response.data;
+  },
+};
+
+// Stock API
+export const stockApi = {
+  downloadData: async (symbols: string[], startDate: string, endDate: string, interval: string = '1d'): Promise<{ message: string; task_id: string }> => {
+    const response = await api.post('/api/stocks/download', {
+      symbols,
+      startDate,
+      endDate,
+      interval,
+    });
+    return response.data;
+  },
+
+  getDownloadProgress: async (): Promise<DownloadProgress> => {
+    const response = await api.get('/api/stocks/download-progress');
+    return response.data;
+  },
+
+  getStats: async (): Promise<any> => {
+    const response = await api.get('/api/stocks/stats');
+    return response.data;
+  },
+
+  getHistory: async (params: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    status?: string;
+  }): Promise<{ downloads: any[]; total: number; page: number; pageSize: number }> => {
+    const response = await api.get('/api/stocks/history', { params });
+    return response.data;
+  },
+
+  getData: async (symbol: string, startDate?: string, endDate?: string, interval: string = '1d'): Promise<any> => {
+    const response = await api.get('/api/stocks/data', {
+      params: { symbol, start_date: startDate, end_date: endDate, interval },
+    });
+    return response.data;
+  },
+
+  getInfo: async (symbol: string): Promise<any> => {
+    const response = await api.get(`/api/stocks/info/${symbol}`);
     return response.data;
   },
 };

@@ -55,8 +55,13 @@ export interface PlotData {
   label?: string;
 }
 
+export interface Fund {
+  code: string;
+  title: string;
+}
+
 export interface DownloadProgress {
-  isDownloading: boolean;
+  is_downloading: boolean;
   progress: number;
   status: string;
   records_downloaded: number;
@@ -64,4 +69,39 @@ export interface DownloadProgress {
   start_time: string | null;
   estimated_completion: string | null;
   current_phase: string;
+  task_id?: string | null;
+  error?: string | null;
+  last_activity?: string | null;
+  progress_history?: Array<{
+    timestamp: string;
+    progress: number;
+    records_downloaded: number;
+  }>;
+  records_per_minute?: number;
+  estimated_remaining_minutes?: number;
+  // Stock-specific progress fields
+  symbols_completed?: number;
+  symbols_total?: number;
+  // New detailed progress fields
+  detailed_messages?: Array<{
+    timestamp: string;
+    message: string;
+    progress: number;
+    chunk: number;
+    type: 'info' | 'success' | 'warning' | 'error';
+  }>;
+  current_chunk_info?: {
+    start_date: string;
+    end_date: string;
+    chunk_number: number;
+    total_chunks: number;
+  };
+  fund_progress?: {
+    [fundName: string]: {
+      status: 'success' | 'no_data' | 'error';
+      rows: number;
+      timestamp: string;
+      error?: string;
+    };
+  };
 }

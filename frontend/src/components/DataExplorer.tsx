@@ -33,6 +33,9 @@ import {
   Tab,
   Divider,
 } from '@mui/material';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import {
   Search as SearchIcon,
   FilterList as FilterIcon,
@@ -43,7 +46,7 @@ import {
 } from '@mui/icons-material';
 import { useQuery } from 'react-query';
 import { dataApi } from '../services/api';
-import { FundRecord, FilterOptions, SortOptions, DataExplorerState } from '../types';
+import { FundRecord, FilterOptions, SortOptions, DataExplorerState, Fund } from '../types';
 import { PlotViewer } from './PlotViewer';
 import { FilterDialog } from './FilterDialog';
 
@@ -61,16 +64,24 @@ export const DataExplorer: React.FC = () => {
   const [showFilters, setShowFilters] = useState(false);
   const [showPlot, setShowPlot] = useState(false);
   const [plotData, setPlotData] = useState<{ x: string | number; y: number; label?: string }[]>([]);
-  const [plotConfig, setPlotConfig] = useState<{ xColumn: string; yColumn: string }>({
+  const [plotConfig, setPlotConfig] = useState<{ 
+    xColumn: string; 
+    yColumn: string; 
+    fundCode: string;
+    startDate: string;
+    endDate: string;
+  }>({
     xColumn: 'date',
     yColumn: 'price',
+    fundCode: '',
+    startDate: '',
+    endDate: '',
   });
 
   const {
     data: recordsData,
     isLoading,
     error,
-    refetch,
   } = useQuery(
     ['records', state.page + 1, state.pageSize, state.filters, state.sort, state.searchTerm],
     () =>
@@ -87,6 +98,7 @@ export const DataExplorer: React.FC = () => {
   );
 
   const { data: columns } = useQuery('columns', dataApi.getColumns);
+  const { data: funds } = useQuery('funds', dataApi.getFunds);
 
   const handlePageChange = (event: unknown, newPage: number) => {
     setState(prev => ({ ...prev, page: newPage }));
@@ -142,12 +154,25 @@ export const DataExplorer: React.FC = () => {
 
   const handlePlotData = async () => {
     try {
-      const data = await dataApi.getPlotData(plotConfig.xColumn, plotConfig.yColumn, state.filters);
+      const data = await dataApi.getPlotData(
+        plotConfig.xColumn, 
+        plotConfig.yColumn, 
+        plotConfig.fundCode || undefined,
+        plotConfig.startDate || undefined,
+        plotConfig.endDate || undefined,
+        state.filters
+      );
       setPlotData(data);
       setShowPlot(true);
     } catch (error) {
       console.error('Failed to load plot data:', error);
     }
+  };
+
+  const handlePlotDialogOpen = () => {
+    setShowPlot(true);
+    // Load initial plot data
+    handlePlotData();
   };
 
   const formatValue = (value: any, column: string) => {
@@ -197,7 +222,7 @@ export const DataExplorer: React.FC = () => {
           <Button
             variant="outlined"
             startIcon={<ChartIcon />}
-            onClick={handlePlotData}
+            onClick={handlePlotDialogOpen}
             disabled={numericColumns.length < 2}
             sx={{ mr: 1 }}
           >
@@ -336,41 +361,135 @@ export const DataExplorer: React.FC = () => {
       <Dialog open={showPlot} onClose={() => setShowPlot(false)} maxWidth="lg" fullWidth>
         <DialogTitle>Data Visualization</DialogTitle>
         <DialogContent>
-          <Box mb={2}>
-            <Grid container spacing={2} alignItems="center">
-              <Grid item xs={6}>
-                <FormControl fullWidth>
-                  <InputLabel>X Axis</InputLabel>
-                  <Select
-                    value={plotConfig.xColumn}
-                    onChange={(e) => setPlotConfig(prev => ({ ...prev, xColumn: e.target.value }))}
-                  >
-                    {columns?.map((col) => (
-                      <MenuItem key={col} value={col}>
-                        {col.replace(/_/g, ' ').toUpperCase()}
+          <LocalizationProvider dateAdapter={AdapterDateFns}>
+            <Box mb={2}>
+              <Grid container spacing={2} alignItems="center">
+                <Grid item xs={12} md={3}>
+                  <FormControl fullWidth>
+                    <InputLabel>Fund</InputLabel>
+                    <Select
+                      value={plotConfig.fundCode}
+                      onChange={(e) => setPlotConfig(prev => ({ ...prev, fundCode: e.target.value }))}
+                      displayEmpty
+                    >
+                      <MenuItem value="">
+                        <em>All Funds</em>
                       </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                      {funds?.map((fund) => (
+                        <MenuItem key={fund.code} value={fund.code}>
+                          {fund.code} - {fund.title}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <FormControl fullWidth>
+                    <InputLabel>X Axis</InputLabel>
+                    <Select
+                      value={plotConfig.xColumn}
+                      onChange={(e) => setPlotConfig(prev => ({ ...prev, xColumn: e.target.value }))}
+                    >
+                      {columns?.map((col) => (
+                        <MenuItem key={col} value={col}>
+                          {col.replace(/_/g, ' ').toUpperCase()}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <FormControl fullWidth>
+                    <InputLabel>Y Axis</InputLabel>
+                    <Select
+                      value={plotConfig.yColumn}
+                      onChange={(e) => setPlotConfig(prev => ({ ...prev, yColumn: e.target.value }))}
+                    >
+                      {numericColumns.map((col) => (
+                        <MenuItem key={col} value={col}>
+                          {col.replace(/_/g, ' ').toUpperCase()}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={3}>
+                  <Box display="flex" justifyContent="center" alignItems="center" height="100%">
+                    <Button
+                      variant="contained"
+                      onClick={handlePlotData}
+                      startIcon={<ChartIcon />}
+                      disabled={!plotConfig.xColumn || !plotConfig.yColumn}
+                      fullWidth
+                    >
+                      Update Plot
+                    </Button>
+                  </Box>
+                </Grid>
               </Grid>
-              <Grid item xs={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Y Axis</InputLabel>
-                  <Select
-                    value={plotConfig.yColumn}
-                    onChange={(e) => setPlotConfig(prev => ({ ...prev, yColumn: e.target.value }))}
+              
+              <Box mt={2}>
+                <Typography variant="h6" gutterBottom>
+                  Date Range (Optional)
+                </Typography>
+                <Grid container spacing={2} alignItems="center">
+                  <Grid item xs={12} md={6}>
+                    <DatePicker
+                      label="Start Date"
+                      value={plotConfig.startDate ? new Date(plotConfig.startDate) : null}
+                      onChange={(date) => setPlotConfig(prev => ({ 
+                        ...prev, 
+                        startDate: date ? date.toISOString().split('T')[0] : '' 
+                      }))}
+                      slotProps={{
+                        textField: {
+                          fullWidth: true
+                        }
+                      }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <DatePicker
+                      label="End Date"
+                      value={plotConfig.endDate ? new Date(plotConfig.endDate) : null}
+                      onChange={(date) => setPlotConfig(prev => ({ 
+                        ...prev, 
+                        endDate: date ? date.toISOString().split('T')[0] : '' 
+                      }))}
+                      slotProps={{
+                        textField: {
+                          fullWidth: true
+                        }
+                      }}
+                    />
+                  </Grid>
+                </Grid>
+                <Box mt={1}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={() => setPlotConfig(prev => ({ 
+                      ...prev, 
+                      startDate: '', 
+                      endDate: '' 
+                    }))}
                   >
-                    {numericColumns.map((col) => (
-                      <MenuItem key={col} value={col}>
-                        {col.replace(/_/g, ' ').toUpperCase()}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-            </Grid>
-          </Box>
-          <PlotViewer data={plotData} xColumn={plotConfig.xColumn} yColumn={plotConfig.yColumn} />
+                    Clear Date Range
+                  </Button>
+                </Box>
+              </Box>
+            </Box>
+          </LocalizationProvider>
+          
+          <PlotViewer 
+            data={plotData} 
+            xColumn={plotConfig.xColumn} 
+            yColumn={plotConfig.yColumn}
+            fundCode={plotConfig.fundCode}
+            fundTitle={funds?.find(f => f.code === plotConfig.fundCode)?.title}
+            startDate={plotConfig.startDate}
+            endDate={plotConfig.endDate}
+          />
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowPlot(false)}>Close</Button>

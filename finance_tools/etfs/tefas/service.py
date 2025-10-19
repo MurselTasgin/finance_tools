@@ -55,11 +55,17 @@ class TefasPersistenceService:
     ) -> Tuple[int, int]:
         df = self.download_between(start_date=start_date, end_date=end_date, funds=funds, kind=kind)
         
-        # Report progress for persistence phase
+        # Report progress for persistence phase (90-100%)
         if self.progress_callback:
-            self.progress_callback("Saving data to database...", 90, 0)
+            self.progress_callback("💾 Saving data to database...", 95, 0)
         
-        return self.persist_dataframe(df)
+        result = self.persist_dataframe(df)
+        
+        # Report completion
+        if self.progress_callback:
+            self.progress_callback("✅ Database save completed", 100, 0)
+        
+        return result
 
     def persist_dataframe(self, df: pd.DataFrame) -> Tuple[int, int]:
         if df is None or df.empty:
@@ -87,7 +93,7 @@ class TefasPersistenceService:
             "number_of_investors",
         ]
         breakdown_cols = [c for c in df.columns if c not in info_cols]
-        breakdown_cols = ["date", "code"] + [c for c in breakdown_cols if c not in {"date", "code"}]
+        breakdown_cols = ["date", "code"] + [c for c in breakdown_cols if c not in {"date", "code", "breakdown_data", "symbol"}]
 
         info_rows = df[info_cols].to_dict(orient="records")
         breakdown_rows = df[breakdown_cols].to_dict(orient="records")

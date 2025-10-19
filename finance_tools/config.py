@@ -33,7 +33,7 @@ class Config:
             # Logging
             "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
             "LOG_FILE": os.getenv("LOG_FILE", "finance_tools.log"),
-            "LOG_FORMAT": os.getenv("LOG_FORMAT", "%(asctime)s - %(name)s - %(levelname)s - %(message)s"),
+            "LOG_FORMAT": os.getenv("LOG_FORMAT", "{time:YYYY-MM-DD HH:mm:ss} - {name} - {level} - {message}"),
             
             # Data storage
             "DATA_CACHE_DIR": os.getenv("DATA_CACHE_DIR", "./cache"),
@@ -42,7 +42,7 @@ class Config:
 
             # Database
             "DATABASE_TYPE": os.getenv("DATABASE_TYPE", "sqlite"),
-            "DATABASE_NAME": os.getenv("DATABASE_NAME", "finance_tools.db"),
+            "DATABASE_NAME": os.getenv("DATABASE_NAME", "test_finance_tools.db"),
             "DATABASE_HOST": os.getenv("DATABASE_HOST", "localhost"),
             "DATABASE_PORT": os.getenv("DATABASE_PORT", "5432"),
             "DATABASE_USER": os.getenv("DATABASE_USER", "postgres"),
@@ -111,7 +111,7 @@ class Config:
         """
         db_type = (self.get("DATABASE_TYPE") or "sqlite").lower()
         if db_type == "sqlite":
-            db_name = self.get("DATABASE_NAME") or "finance_tools.db"
+            db_name = self.get("DATABASE_NAME") or "test_finance_tools.db"
 
 
 

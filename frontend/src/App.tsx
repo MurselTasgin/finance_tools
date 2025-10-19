@@ -12,6 +12,7 @@ import {
 } from '@mui/material';
 import { DataRepository } from './components/DataRepository';
 import { DataExplorer } from './components/DataExplorer';
+import { DataManagement } from './components/DataManagement';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -58,6 +59,7 @@ function App() {
             <Tabs value={currentTab} onChange={handleTabChange}>
               <Tab label="Data Repository" />
               <Tab label="Data Explorer" />
+              <Tab label="Data Management" />
             </Tabs>
           </Box>
           
@@ -67,6 +69,10 @@ function App() {
           
           <TabPanel value={currentTab} index={1}>
             <DataExplorer />
+          </TabPanel>
+          
+          <TabPanel value={currentTab} index={2}>
+            <DataManagement />
           </TabPanel>
         </Paper>
       </Container>

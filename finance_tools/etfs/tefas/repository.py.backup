@@ -23,15 +23,6 @@ from ...config import get_config
 from ...logging import get_logger
 from .models import Base, TefasFundInfo, TefasFundBreakdown, DownloadHistory
 
-# Import stock models to ensure they're registered with SQLAlchemy Base
-# This must happen before create_all() is called
-# Note: Stock downloads now use shared DownloadHistory tables, so we only import price/info models
-try:
-    from ...stocks.models import StockPriceHistory, StockInfo
-    STOCK_MODELS_AVAILABLE = True
-except ImportError:
-    STOCK_MODELS_AVAILABLE = False
-
 
 class DatabaseEngineProvider:
     """Factory for SQLAlchemy engine and sessions using central config."""
@@ -67,26 +58,13 @@ class DatabaseEngineProvider:
         required_tables = [
             TefasFundInfo.__tablename__,
             TefasFundBreakdown.__tablename__,
-            'download_history',  # Shared history table
-            'download_progress_log',  # Shared progress log
         ]
-        
-        # Add stock tables if stock models are available
-        # Note: Stock downloads use shared download_history and download_progress_log tables
-        if STOCK_MODELS_AVAILABLE:
-            required_tables.extend([
-                'stock_price_history',
-                'stock_info',
-            ])
-        
         return all(inspector.has_table(t) for t in required_tables)
 
     def ensure_initialized(self) -> None:
         """Create tables only if they are missing."""
         if not self.is_initialized():
-            self.logger.info("Database not fully initialized. Creating missing tables...")
             self.create_all()
-            self.logger.info("Database tables created successfully")
 
 
 class TefasRepository:
@@ -140,7 +118,11 @@ class TefasRepository:
             code_val = r.get('code')
             breakdown_data = {k: v for k, v in r.items() if k not in {'date', 'code'}}
             
-            obj = TefasFundBreakdown(**r)
+            obj = TefasFundBreakdown(
+                date=date_val,
+                code=code_val,
+                breakdown_data=str(breakdown_data) if breakdown_data else None
+            )
             
             try:
                 self.session.add(obj)
@@ -155,11 +137,7 @@ class TefasRepository:
                 ).scalar_one()
 
                 # Update breakdown_data
-                # Update all float fields from r
-                for key, value in r.items():
-                    if key in {"date", "code"}:
-                        continue
-                    setattr(existing, key, value)
+                existing.breakdown_data = str(breakdown_data) if breakdown_data else None
                 self.session.commit()
                 count += 1
         return count
@@ -572,18 +550,10 @@ class TefasRepository:
         page: int = 1,
         page_size: int = 50,
         search: str = "",
-        status_filter: Optional[str] = None,
-        data_type_filter: Optional[str] = None
+        status_filter: Optional[str] = None
     ) -> Tuple[List[DownloadHistory], int]:
-        """
-        Get paginated download history.
-        Now supports both TEFAS and Stock downloads from unified table.
-        """
+        """Get paginated download history."""
         stmt = select(DownloadHistory)
-        
-        # Filter by data type if specified (e.g., 'tefas' or 'stock')
-        if data_type_filter:
-            stmt = stmt.where(DownloadHistory.data_type == data_type_filter)
         
         # Apply search
         if search:
@@ -592,8 +562,6 @@ class TefasRepository:
                 or_(
                     DownloadHistory.kind.like(search_term),
                     DownloadHistory.task_id.like(search_term),
-                    DownloadHistory.funds.contains(search_term),
-                    DownloadHistory.symbols.contains(search_term)
                 )
             )
         
@@ -693,166 +661,5 @@ class TefasRepository:
         # This would need to be implemented based on how fund types are determined
         # For now, return empty list as this requires additional logic
         return []
-
-    def create_progress_log_entry(self, task_id: str, timestamp: datetime, message: str, 
-                                message_type: str, progress_percent: int = 0, 
-                                chunk_number: int = 0, records_count: int = None, 
-                                fund_name: str = None) -> int:
-        """
-        Create a progress log entry for a download task.
-        Works with unified download_progress_log table (both TEFAS and Stock).
-        
-        Note: fund_name parameter is kept for backward compatibility but maps to item_name field.
-        """
-        from .models import DownloadProgressLog
-        
-        log_entry = DownloadProgressLog(
-            task_id=task_id,
-            timestamp=timestamp,
-            message=message,
-            message_type=message_type,
-            progress_percent=progress_percent,
-            chunk_number=chunk_number,
-            records_count=records_count,
-            item_name=fund_name  # Map fund_name parameter to item_name field
-        )
-        
-        self.session.add(log_entry)
-        self.session.commit()
-        return log_entry.id
-
-    def get_progress_logs(self, task_id: str) -> List[dict]:
-        """
-        Get all progress log entries for a specific task.
-        Works with unified download_progress_log table (both TEFAS and Stock).
-        """
-        from .models import DownloadProgressLog
-        
-        logs = self.session.query(DownloadProgressLog)\
-            .filter(DownloadProgressLog.task_id == task_id)\
-            .order_by(DownloadProgressLog.timestamp.asc())\
-            .all()
-        
-        return [
-            {
-                "id": log.id,
-                "task_id": log.task_id,
-                "timestamp": log.timestamp.isoformat(),
-                "message": log.message,
-                "message_type": log.message_type,
-                "progress_percent": log.progress_percent,
-                "chunk_number": log.chunk_number,
-                "records_count": log.records_count,
-                "item_name": getattr(log, 'item_name', None),  # Unified field (fund_name or symbol)
-                "fund_name": getattr(log, 'item_name', None),  # Backward compatibility alias
-                "created_at": log.created_at.isoformat()
-            }
-            for log in logs
-        ]
-
-    def get_download_task_details(self, task_id: str) -> dict:
-        """Get detailed information about a download task including progress logs."""
-        from .models import DownloadHistory, DownloadProgressLog
-        
-        # Get the main download record
-        download = self.session.query(DownloadHistory)\
-            .filter(DownloadHistory.task_id == task_id)\
-            .first()
-        
-        if not download:
-            return None
-        
-        # Get progress logs
-        progress_logs = self.get_progress_logs(task_id)
-        
-        # Calculate statistics
-        total_messages = len(progress_logs)
-        success_messages = len([log for log in progress_logs if log['message_type'] == 'success'])
-        error_messages = len([log for log in progress_logs if log['message_type'] == 'error'])
-        warning_messages = len([log for log in progress_logs if log['message_type'] == 'warning'])
-        
-        # Calculate total records from progress logs
-        total_records_from_logs = sum([
-            log['records_count'] for log in progress_logs 
-            if log['records_count'] is not None
-        ])
-        
-        # Helper function to safely get list from JSON field
-        def safe_json_list(value):
-            """Convert JSON field to list, handling null/None/empty cases."""
-            if value is None or value == "null" or value == "":
-                return []
-            if isinstance(value, list):
-                return value
-            if isinstance(value, str):
-                try:
-                    import json
-                    parsed = json.loads(value)
-                    return parsed if isinstance(parsed, list) else []
-                except:
-                    return []
-            return []
-        
-        return {
-            "task_info": {
-                "id": download.id,
-                "task_id": download.task_id,
-                "data_type": getattr(download, 'data_type', 'tefas'),  # New: data type
-                "start_date": download.start_date.isoformat(),
-                "end_date": download.end_date.isoformat(),
-                "kind": download.kind,
-                "funds": safe_json_list(download.funds),  # For TEFAS
-                "symbols": safe_json_list(getattr(download, 'symbols', None)),  # For Stock
-                "status": download.status,
-                "start_time": download.start_time.isoformat(),
-                "end_time": download.end_time.isoformat() if download.end_time else None,
-                "records_downloaded": download.records_downloaded,
-                "total_records": download.total_records,
-                "items_completed": getattr(download, 'items_completed', 0),  # New: Generic counter
-                "items_failed": getattr(download, 'items_failed', 0),  # New: Generic counter
-                "error_message": download.error_message,
-                "created_at": download.created_at.isoformat()
-            },
-            "progress_logs": progress_logs,
-            "statistics": {
-                "total_messages": total_messages,
-                "success_messages": success_messages,
-                "error_messages": error_messages,
-                "warning_messages": warning_messages,
-                "total_records_from_logs": total_records_from_logs,
-                "duration_seconds": (
-                    (download.end_time or datetime.utcnow()) - download.start_time
-                ).total_seconds() if download.start_time else 0
-            }
-        }
-
-    def cleanup_orphaned_running_tasks(self) -> int:
-        """
-        Mark all 'running' tasks as 'failed' if they're not in active memory.
-        This is called on server startup to clean up tasks that were interrupted.
-        
-        Returns:
-            Number of tasks cleaned up
-        """
-        from .models import DownloadHistory
-        
-        # Find all tasks with 'running' status
-        running_tasks = self.session.query(DownloadHistory)\
-            .filter(DownloadHistory.status == 'running')\
-            .all()
-        
-        if not running_tasks:
-            return 0
-        
-        # Mark them as failed due to server restart
-        for task in running_tasks:
-            task.status = 'failed'
-            task.end_time = datetime.utcnow()
-            task.error_message = 'Task interrupted by server restart or crash'
-        
-        self.session.commit()
-        self.logger.info(f"Cleaned up {len(running_tasks)} orphaned 'running' tasks")
-        
-        return len(running_tasks)
 
 

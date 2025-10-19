@@ -82,12 +82,13 @@ class TefasDownloader:
             
             # Report progress
             self.current_chunk += 1
-            progress_percent = int((self.current_chunk / self.total_chunks) * 100)
+            # Calculate progress: reserve last 10% for database saving (0-90% for download)
+            download_progress = int((self.current_chunk / self.total_chunks) * 90)
             
             if self.progress_callback:
-                self.progress_callback(f"Fetching data from {b_date} to {e_date}", progress_percent, self.current_chunk)
+                self.progress_callback(f"Fetching data from {b_date} to {e_date} [Total chunks: {self.total_chunks}]", download_progress, self.current_chunk)
             else:
-                print(f"Fetching data from {b_date} to {e_date} ({progress_percent}%)")
+                print(f"Fetching data from {b_date} to {e_date} ({download_progress}%)")
             
             if funds is not None:
                 for f_name in funds:
@@ -103,19 +104,19 @@ class TefasDownloader:
                             f_list.append(t_data)
                             msg = f"  ✅ Fetched data for {f_name}: {len(t_data)} rows"
                             if self.progress_callback:
-                                self.progress_callback(msg, progress_percent, self.current_chunk)
+                                self.progress_callback(msg, download_progress, self.current_chunk)
                             else:
                                 print(msg)
                         else:
                             msg = f"  ⚠️  No data found for {f_name}"
                             if self.progress_callback:
-                                self.progress_callback(msg, progress_percent, self.current_chunk)
+                                self.progress_callback(msg, download_progress, self.current_chunk)
                             else:
                                 print(msg)
                     except Exception as e:
                         msg = f"  ❌ Error fetching data for {f_name}: {e}"
                         if self.progress_callback:
-                            self.progress_callback(msg, progress_percent, self.current_chunk)
+                            self.progress_callback(msg, download_progress, self.current_chunk)
                         else:
                             print(msg)
             else:
@@ -131,19 +132,19 @@ class TefasDownloader:
                         f_list.append(t_data)
                         msg = f"  ✅ Fetched data: {len(t_data)} rows"
                         if self.progress_callback:
-                            self.progress_callback(msg, progress_percent, self.current_chunk)
+                            self.progress_callback(msg, download_progress, self.current_chunk)
                         else:
                             print(msg)
                     else:
                         msg = f"  ⚠️  No data found"
                         if self.progress_callback:
-                            self.progress_callback(msg, progress_percent, self.current_chunk)
+                            self.progress_callback(msg, download_progress, self.current_chunk)
                         else:
                             print(msg)
                 except Exception as e:
                     msg = f"  ❌ Error fetching data: {e}"
                     if self.progress_callback:
-                        self.progress_callback(msg, progress_percent, self.current_chunk)
+                        self.progress_callback(msg, download_progress, self.current_chunk)
                     else:
                         print(msg)
             
@@ -164,14 +165,15 @@ class TefasDownloader:
             
             final_msg = f"✅ Download completed! Total records: {len(funds_df)}"
             if self.progress_callback:
-                self.progress_callback(final_msg, 100, self.total_chunks)
+                # Download phase complete at 90%, leaving 10% for database save
+                self.progress_callback(final_msg, 90, self.total_chunks)
             else:
                 print(final_msg)
             return funds_df
         else:
             final_msg = "⚠️  No data was fetched. Returning empty DataFrame."
             if self.progress_callback:
-                self.progress_callback(final_msg, 100, self.total_chunks)
+                self.progress_callback(final_msg, 90, self.total_chunks)
             else:
                 print(final_msg)
             return pd.DataFrame()
