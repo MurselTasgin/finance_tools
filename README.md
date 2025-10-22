@@ -275,3 +275,11 @@ finance-tools etf-scan --start 2024-06-01 --end 2025-05-01 --ema-short 20 --ema-
 --> FOR INVESTEMENT ETFS
 (cenv312) finance_tools>  finance-tools etf-scan --start 2024-07-01 --end 2025-09-04 --exclude EMEKL  --ema-short 20 --ema-long 50 --macd 26 12 9 \
     --rsi 14 --rsi-lower 30 --rsi-upper 70 --db ./test_finance_tools.db > etf_scan_results_04_Sep_2025.md
+
+
+---------------
+START BACKEND -
+---------------
+(cenv312) > cd backend
+/Users/murseltasgin/PROJECTS/finance_tools/backend
+(cenv312) backend >  uvicorn main:app --reload --host 0.0.0.0 --port 8070 

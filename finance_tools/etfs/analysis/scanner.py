@@ -210,14 +210,20 @@ class EtfScanner:
             rel = clip((float(price) - float(st)) / float(price), -0.2, 0.2)
             supertrend_comp = rel * float(st_dir)
 
-        # Combine with weights
-        components["ema_price"] = criteria.w_ema_cross * ema_price_comp
-        components["ema_cross"] = components.get("ema_cross", 0.0) + criteria.w_ema_cross * ema_cross_comp
-        components["macd"] = components.get("macd", 0.0) + criteria.w_macd * macd_comp
-        components["rsi"] = components.get("rsi", 0.0) + criteria.w_rsi * rsi_comp
-        components["momentum"] = criteria.w_momentum * momentum_comp
-        components["momentum_daily"] = criteria.w_momentum_daily * momentum_daily_comp
-        components["supertrend"] = criteria.w_supertrend * supertrend_comp
+        # Combine with weights - only include selected scanners
+        if criteria.w_ema_cross > 0:
+            components["ema_price"] = criteria.w_ema_cross * ema_price_comp
+            components["ema_cross"] = components.get("ema_cross", 0.0) + criteria.w_ema_cross * ema_cross_comp
+        if criteria.w_macd > 0:
+            components["macd"] = components.get("macd", 0.0) + criteria.w_macd * macd_comp
+        if criteria.w_rsi > 0:
+            components["rsi"] = components.get("rsi", 0.0) + criteria.w_rsi * rsi_comp
+        if criteria.w_momentum > 0:
+            components["momentum"] = criteria.w_momentum * momentum_comp
+        if criteria.w_momentum_daily > 0:
+            components["momentum_daily"] = criteria.w_momentum_daily * momentum_daily_comp
+        if criteria.w_supertrend > 0:
+            components["supertrend"] = criteria.w_supertrend * supertrend_comp
 
         score = sum(components.values())
 
@@ -230,16 +236,16 @@ class EtfScanner:
         reasons.append("")
         reasons.append("Scanner Contributions (Component × Weight = Contribution):")
         
-        # Add each component's contribution with detailed analysis
+        # Add each component's contribution with detailed analysis (only selected scanners)
         for component_name, contribution in components.items():
             weight = getattr(criteria, f"w_{component_name}", 0.0)
             raw_value = contribution / weight if weight > 0 else 0.0
             
+            # Only show components that were actually selected (have non-zero weights)
             if weight > 0:
                 status = "✅ ACTIVE" if abs(contribution) > 0.001 else "➖ NEUTRAL"
                 reasons.append(f"  • {component_name.replace('_', ' ').title()}: {raw_value:.3f} × {weight} = {contribution:.3f} {status}")
-            else:
-                reasons.append(f"  • {component_name.replace('_', ' ').title()}: {raw_value:.3f} × 0 = 0.000 (INACTIVE)")
+            # Note: We no longer show INACTIVE components since they're not in the components dict
 
         # Add threshold analysis
         reasons.append("")

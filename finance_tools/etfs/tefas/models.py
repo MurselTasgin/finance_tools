@@ -29,6 +29,7 @@ class TefasFundInfo(Base):
     market_cap: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     number_of_shares: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     number_of_investors: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    fund_type: Mapped[Optional[str]] = mapped_column(String(10), nullable=True, index=True)  # BYF, YAT, EMK
     
     # Unique constraint on date and code
     __table_args__ = (

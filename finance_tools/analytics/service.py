@@ -47,6 +47,7 @@ class AnalyticsService:
         include_keywords: Optional[List[str]] = None,
         exclude_keywords: Optional[List[str]] = None,
         case_sensitive: bool = False,
+        fund_type: Optional[str] = None,
         user_id: Optional[str] = None,
         save_results: bool = True
     ) -> Dict[str, Any]:
@@ -110,7 +111,8 @@ class AnalyticsService:
                 end=end,
                 column=column,
                 indicators=indicators,
-                keyword_filter=keyword_filter
+                keyword_filter=keyword_filter,
+                fund_type=fund_type
             )
 
             # Execute analysis
@@ -309,22 +311,22 @@ class AnalyticsService:
             if weights is None:
                 weights = {}
                 if 'ema_cross' in (scanners or []):
-                    weights["w_ema"] = 1.0
+                    weights["ema_cross"] = 1.0
                 if 'macd' in (scanners or []):
-                    weights["w_macd"] = 1.0
+                    weights["macd"] = 1.0
                 if 'rsi' in (scanners or []):
-                    weights["w_rsi"] = 1.0
+                    weights["rsi"] = 1.0
                 if 'momentum' in (scanners or []):
-                    weights["w_momentum"] = 1.0
+                    weights["momentum"] = 1.0
                 if 'daily_momentum' in (scanners or []):
-                    weights["w_momentum_daily"] = 1.0
+                    weights["daily_momentum"] = 1.0
                 if 'supertrend' in (scanners or []):
-                    weights["w_supertrend"] = 1.0
+                    weights["supertrend"] = 1.0
 
             # Get data for scanning
             technical_results = self.run_etf_technical_analysis(
                 db_session, specific_codes, start_date, end_date, column, indicators,
-                include_keywords, exclude_keywords, case_sensitive, user_id, save_results=False
+                include_keywords, exclude_keywords, case_sensitive, fund_type, user_id, save_results=False
             )
 
             if "error" in technical_results:
@@ -391,6 +393,25 @@ class AnalyticsService:
                     elif scanner_id == 'rsi':
                         rsi_window_actual = config.get('window', rsi_window)
 
+            # Map frontend scanner weights to backend weight keys
+            # Frontend sends: {'ema_cross': 2.0, 'macd': 1.5, 'rsi': 1.0}
+            # Backend expects: {'w_ema': 2.0, 'w_macd': 1.5, 'w_rsi': 1.0}
+            scanner_weight_mapping = {
+                'ema_cross': 'w_ema',
+                'macd': 'w_macd', 
+                'rsi': 'w_rsi',
+                'momentum': 'w_momentum',
+                'daily_momentum': 'w_momentum_daily',
+                'supertrend': 'w_supertrend'
+            }
+            
+            # Convert frontend weights to backend format
+            backend_weights = {}
+            for scanner_id, weight in weights.items():
+                if scanner_id in scanner_weight_mapping:
+                    backend_key = scanner_weight_mapping[scanner_id]
+                    backend_weights[backend_key] = weight
+            
             # Run the scanner with the configured criteria using only selected scanners
             criteria = EtfScanCriteria(
                 column=column,
@@ -402,13 +423,13 @@ class AnalyticsService:
                 rsi_window=rsi_window_actual,
                 rsi_lower=rsi_lower,
                 rsi_upper=rsi_upper,
-                # Only use weights for selected scanners, set others to 0
-                w_ema_cross=weights.get("w_ema", 0.0) if 'ema_cross' in (scanners or []) else 0.0,
-                w_macd=weights.get("w_macd", 0.0) if 'macd' in (scanners or []) else 0.0,
-                w_rsi=weights.get("w_rsi", 0.0) if 'rsi' in (scanners or []) else 0.0,
-                w_momentum=weights.get("w_momentum", 0.0) if 'momentum' in (scanners or []) else 0.0,
-                w_momentum_daily=weights.get("w_momentum_daily", 0.0) if 'daily_momentum' in (scanners or []) else 0.0,
-                w_supertrend=weights.get("w_supertrend", 0.0) if 'supertrend' in (scanners or []) else 0.0,
+                # Use mapped weights for selected scanners, set others to 0
+                w_ema_cross=backend_weights.get("w_ema", 0.0) if 'ema_cross' in (scanners or []) else 0.0,
+                w_macd=backend_weights.get("w_macd", 0.0) if 'macd' in (scanners or []) else 0.0,
+                w_rsi=backend_weights.get("w_rsi", 0.0) if 'rsi' in (scanners or []) else 0.0,
+                w_momentum=backend_weights.get("w_momentum", 0.0) if 'momentum' in (scanners or []) else 0.0,
+                w_momentum_daily=backend_weights.get("w_momentum_daily", 0.0) if 'daily_momentum' in (scanners or []) else 0.0,
+                w_supertrend=backend_weights.get("w_supertrend", 0.0) if 'supertrend' in (scanners or []) else 0.0,
                 score_buy_threshold=max(score_threshold, 1.0),  # Ensure minimum threshold of 1.0
                 score_sell_threshold=max(score_threshold, 1.0),  # Ensure minimum threshold of 1.0
             )

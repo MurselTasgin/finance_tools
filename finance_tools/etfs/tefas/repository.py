@@ -113,6 +113,7 @@ class TefasRepository:
                 market_cap=r.get("market_cap"),
                 number_of_shares=r.get("number_of_shares"),
                 number_of_investors=r.get("number_of_investors"),
+                fund_type=r.get("fund_type"),
             )
             try:
                 self.session.add(obj)
@@ -132,6 +133,7 @@ class TefasRepository:
                 existing.market_cap = obj.market_cap
                 existing.number_of_shares = obj.number_of_shares
                 existing.number_of_investors = obj.number_of_investors
+                existing.fund_type = obj.fund_type
                 self.session.commit()
                 count += 1
         return count
@@ -194,6 +196,7 @@ class TefasRepository:
         exclude_keywords: Optional[List[str]] = None,
         case_sensitive: bool = False,
         match_all_includes: bool = False,
+        fund_type: Optional[str] = None,
     ) -> List[TefasFundInfo]:
         """Flexible query for `TefasFundInfo` with optional filters.
 
@@ -202,6 +205,7 @@ class TefasRepository:
         - include_keywords: title must include any/all of these (controlled by match_all_includes)
         - exclude_keywords: title must not include any of these
         - case_sensitive: whether keyword matching is case sensitive
+        - fund_type: restrict to specific fund type (BYF, YAT, EMK)
         """
         stmt = select(TefasFundInfo)
         if codes:
@@ -210,6 +214,8 @@ class TefasRepository:
             stmt = stmt.where(TefasFundInfo.date >= start)
         if end is not None:
             stmt = stmt.where(TefasFundInfo.date <= end)
+        if fund_type is not None:
+            stmt = stmt.where(TefasFundInfo.fund_type == fund_type)
 
         # Title filters
         title_col = TefasFundInfo.title

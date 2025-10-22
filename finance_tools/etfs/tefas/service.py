@@ -59,7 +59,7 @@ class TefasPersistenceService:
         if self.progress_callback:
             self.progress_callback("💾 Saving data to database...", 95, 0)
         
-        result = self.persist_dataframe(df)
+        result = self.persist_dataframe(df, kind)
         
         # Report completion
         if self.progress_callback:
@@ -67,7 +67,7 @@ class TefasPersistenceService:
         
         return result
 
-    def persist_dataframe(self, df: pd.DataFrame) -> Tuple[int, int]:
+    def persist_dataframe(self, df: pd.DataFrame, kind: str = "BYF") -> Tuple[int, int]:
         if df is None or df.empty:
             return 0, 0
         
@@ -82,6 +82,9 @@ class TefasPersistenceService:
         # Ensure `date` is Python date
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"], errors="coerce").dt.date
+        
+        # Add fund_type column
+        df["fund_type"] = kind
 
         info_cols = [
             "date",
@@ -91,6 +94,7 @@ class TefasPersistenceService:
             "market_cap",
             "number_of_shares",
             "number_of_investors",
+            "fund_type",
         ]
         breakdown_cols = [c for c in df.columns if c not in info_cols]
         breakdown_cols = ["date", "code"] + [c for c in breakdown_cols if c not in {"date", "code", "breakdown_data", "symbol"}]

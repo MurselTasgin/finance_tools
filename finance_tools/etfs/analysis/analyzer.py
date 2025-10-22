@@ -33,6 +33,7 @@ class EtfAnalyzer:
             exclude_keywords=(request.keyword_filter.exclude_keywords if request.keyword_filter else None),
             case_sensitive=(request.keyword_filter.case_sensitive if request.keyword_filter else False),
             match_all_includes=(request.keyword_filter.match_all_includes if request.keyword_filter else False),
+            fund_type=request.fund_type,
         )
 
         df = self.title_filter.apply(df, request.keyword_filter)

@@ -359,10 +359,9 @@ def progress_callback(status: str, progress: int, current_chunk: int):
                     "date_range": f"{start_date} to {end_date}",
                     "enhanced_message": enhanced_message
                 }
-                # Update total records downloaded
-                old_count = download_progress.get("records_downloaded", 0)
-                download_progress["records_downloaded"] = old_count + row_count
-                logger.info(f"📊 Updated records_downloaded: {old_count} + {row_count} = {download_progress['records_downloaded']}")
+                # Don't increment records_downloaded here to avoid double counting
+                # The final count will be set after download completion
+                logger.info(f"📊 Downloaded {row_count} rows for {fund_name} (not adding to total yet to avoid double counting)")
                 
                 # Update the status message to include date range
                 status = enhanced_message
@@ -440,10 +439,9 @@ def progress_callback(status: str, progress: int, current_chunk: int):
                     "date_range": f"{start_date} to {end_date}",
                     "enhanced_message": enhanced_message
                 }
-                # Update total records downloaded
-                old_count = download_progress.get("records_downloaded", 0)
-                download_progress["records_downloaded"] = old_count + row_count
-                logger.info(f"📊 Updated records_downloaded (all funds): {old_count} + {row_count} = {download_progress['records_downloaded']}")
+                # Don't increment records_downloaded here to avoid double counting
+                # The final count will be set after download completion
+                logger.info(f"📊 Downloaded {row_count} rows for all funds (not adding to total yet to avoid double counting)")
                 
                 # Update the status message to include date range
                 status = enhanced_message
@@ -454,7 +452,8 @@ def progress_callback(status: str, progress: int, current_chunk: int):
             if completion_match:
                 total_records = int(completion_match.group(1))
                 download_progress["total_records"] = total_records
-                download_progress["records_downloaded"] = total_records
+                # Don't set records_downloaded here - it will be set properly in run_download_sync
+                logger.info(f"📊 Download completed with {total_records} total records (records_downloaded will be set properly later)")
         
         # Determine message type based on content
         message_type = "info"
@@ -708,7 +707,7 @@ def run_download_sync(start_date: str, end_date: str, funds: list = None, kind: 
                 "progress": 100,
                 "status": f"Download completed successfully! {total_records} total records saved ({info_count} info, {breakdown_count} breakdown).",
                 "current_phase": "completed",
-                "records_downloaded": total_records,
+                "records_downloaded": info_count,  # Only count info records as "downloaded records"
                 "is_downloading": False,
             })
         
@@ -722,7 +721,7 @@ def run_download_sync(start_date: str, end_date: str, funds: list = None, kind: 
                 repo.update_download_record(
                     task_id=task_id,
                     status="completed",
-                    records_downloaded=total_records,
+                    records_downloaded=info_count,  # Only count info records as "downloaded records"
                     total_records=total_records
                 )
             logger.info(f"✅ Download history updated successfully for Task ID: {task_id}")
@@ -1654,6 +1653,21 @@ def run_analysis_sync(analysis_type: str, analysis_name: str, parameters: dict, 
                 logger.info(f"📊 Starting ETF scan analysis...")
                 log_progress("Starting ETF scan analysis", 10, 'info')
                 
+                # Extract scanner configurations from frontend parameters
+                scanner_configs = parameters.get('scanner_configs', {})
+                scanners = parameters.get('scanners', [])
+                weights = parameters.get('weights', {})
+                
+                # Extract individual scanner parameters for backward compatibility
+                ema_config = scanner_configs.get('ema_cross', {})
+                macd_config = scanner_configs.get('macd', {})
+                rsi_config = scanner_configs.get('rsi', {})
+                supertrend_config = scanner_configs.get('supertrend', {})
+                momentum_config = scanner_configs.get('momentum', {})
+                daily_momentum_config = scanner_configs.get('daily_momentum', {})
+                
+                logger.info(f"📊 ETF Scan Parameters - Scanners: {scanners}, Configs: {scanner_configs}")
+                
                 analysis_result = analytics_service.run_etf_scan_analysis(
                     db_session=session,
                     fund_type=parameters.get('fund_type'),
@@ -1661,21 +1675,25 @@ def run_analysis_sync(analysis_type: str, analysis_name: str, parameters: dict, 
                     start_date=parameters.get('start_date'),
                     end_date=parameters.get('end_date'),
                     column=parameters.get('column', 'price'),
-                    ema_short=parameters.get('ema_short', 20),
-                    ema_long=parameters.get('ema_long', 50),
-                    rsi_window=parameters.get('rsi_window', 14),
-                    rsi_lower=parameters.get('rsi_lower', 30),
-                    rsi_upper=parameters.get('rsi_upper', 70),
-                    macd_fast=parameters.get('macd_fast', 12),
-                    macd_slow=parameters.get('macd_slow', 26),
-                    macd_sign=parameters.get('macd_sign', 9),
-                    weights=parameters.get('weights', {}),
-                    score_threshold=parameters.get('score_threshold', 50),
+                    # EMA parameters from scanner config
+                    ema_short=ema_config.get('short', parameters.get('ema_short', 20)),
+                    ema_long=ema_config.get('long', parameters.get('ema_long', 50)),
+                    # RSI parameters from scanner config
+                    rsi_window=rsi_config.get('window', parameters.get('rsi_window', 14)),
+                    rsi_lower=rsi_config.get('lower', parameters.get('rsi_lower', 30)),
+                    rsi_upper=rsi_config.get('upper', parameters.get('rsi_upper', 70)),
+                    # MACD parameters from scanner config
+                    macd_fast=macd_config.get('fast', parameters.get('macd_fast', 12)),
+                    macd_slow=macd_config.get('slow', parameters.get('macd_slow', 26)),
+                    macd_sign=macd_config.get('signal', parameters.get('macd_sign', 9)),
+                    # Use the structured parameters from frontend
+                    weights=weights,
+                    score_threshold=parameters.get('score_threshold', 0.0),
                     include_keywords=parameters.get('include_keywords', []),
                     exclude_keywords=parameters.get('exclude_keywords', []),
                     case_sensitive=parameters.get('case_sensitive', False),
-                    scanners=parameters.get('scanners', ['ema', 'macd', 'rsi']),
-                    scanner_configs=parameters.get('scanner_configs', {}),
+                    scanners=scanners,
+                    scanner_configs=scanner_configs,
                     save_results=False,  # Don't save here - backend will save after this returns
                 )
                 

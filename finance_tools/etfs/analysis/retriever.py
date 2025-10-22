@@ -32,6 +32,7 @@ class EtfDataRetriever:
         exclude_keywords: Optional[List[str]] = None,
         case_sensitive: bool = False,
         match_all_includes: bool = False,
+        fund_type: Optional[str] = None,
     ) -> pd.DataFrame:
         """Fetch fund info rows as a pandas DataFrame with optional filters."""
         with self.SessionLocal() as session:
@@ -47,6 +48,7 @@ class EtfDataRetriever:
                 exclude_keywords=exclude_keywords,
                 case_sensitive=case_sensitive,
                 match_all_includes=match_all_includes,
+                fund_type=fund_type,
             )
 
         records: List[Dict] = []
@@ -60,6 +62,7 @@ class EtfDataRetriever:
                     "market_cap": r.market_cap,
                     "number_of_shares": r.number_of_shares,
                     "number_of_investors": r.number_of_investors,
+                    "fund_type": r.fund_type,
                 }
             )
 

@@ -22,6 +22,7 @@ class IndicatorRequest:
     column: str  # e.g., "price", "market_cap", "number_of_investors", "number_of_shares"
     indicators: Dict[str, Dict]  # e.g., {"ema": {"window": 20}, "rsi": {"window": 14}}
     keyword_filter: Optional[KeywordFilter] = None
+    fund_type: Optional[str] = None  # BYF, YAT, EMK
 
 
 @dataclass
