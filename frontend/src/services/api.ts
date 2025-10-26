@@ -238,6 +238,35 @@ export const stockApi = {
     return response.data;
   },
 
+  // Stock Groups
+  getGroups: async (): Promise<any> => {
+    const response = await api.get('/api/stocks/groups');
+    return response.data;
+  },
+
+  createGroup: async (name: string, description: string, symbols: string[]): Promise<any> => {
+    const response = await api.post('/api/stocks/groups', {
+      name,
+      description,
+      symbols,
+    });
+    return response.data;
+  },
+
+  updateGroup: async (groupId: number, name?: string, description?: string, symbols?: string[]): Promise<any> => {
+    const response = await api.put(`/api/stocks/groups/${groupId}`, {
+      name,
+      description,
+      symbols,
+    });
+    return response.data;
+  },
+
+  deleteGroup: async (groupId: number): Promise<any> => {
+    const response = await api.delete(`/api/stocks/groups/${groupId}`);
+    return response.data;
+  },
+
   getHistory: async (params: {
     page?: number;
     pageSize?: number;
@@ -257,6 +286,48 @@ export const stockApi = {
 
   getInfo: async (symbol: string): Promise<any> => {
     const response = await api.get(`/api/stocks/info/${symbol}`);
+    return response.data;
+  },
+
+  // Data explorer endpoints
+  getRecords: async (
+    page: number = 1,
+    pageSize: number = 50,
+    filters: FilterOptions[] = [],
+    sort: SortOptions | null = null,
+    searchTerm: string = ''
+  ): Promise<PaginatedResponse<any>> => {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      pageSize: pageSize.toString(),
+      search: searchTerm,
+    });
+
+    if (sort) {
+      params.append('sortBy', sort.column);
+      params.append('sortDir', sort.direction);
+    }
+
+    filters.forEach((filter, index) => {
+      params.append(`filters[${index}][column]`, filter.column);
+      params.append(`filters[${index}][operator]`, filter.operator);
+      params.append(`filters[${index}][value]`, filter.value.toString());
+      if (filter.value2 !== undefined) {
+        params.append(`filters[${index}][value2]`, filter.value2.toString());
+      }
+    });
+
+    const response = await api.get(`/api/stocks/records?${params.toString()}`);
+    return response.data;
+  },
+
+  getColumns: async (): Promise<string[]> => {
+    const response = await api.get('/api/stocks/columns');
+    return response.data;
+  },
+
+  getSymbols: async (): Promise<{ symbols: Array<{ symbol: string }> }> => {
+    const response = await api.get('/api/stocks/symbols');
     return response.data;
   },
 };

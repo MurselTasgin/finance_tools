@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy import String, Integer, Float, Date, DateTime, Text, Index
+from sqlalchemy import String, Integer, Float, Date, DateTime, Text, Boolean, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 # Import shared Base from TEFAS models to ensure all tables are in same database
@@ -91,6 +91,33 @@ class StockInfo(Base):
     __table_args__ = (
         {"sqlite_autoincrement": True},
     )
+
+
+class StockGroup(Base):
+    """
+    Stock group/portfolio table - stores user-defined groups of stocks.
+    
+    Allows users to create and save custom stock lists for easy selection
+    during data download and analysis.
+    """
+    
+    __tablename__ = "stock_groups"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, unique=True, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    symbols: Mapped[str] = mapped_column(Text, nullable=False)  # JSON array of symbols
+    
+    # Metadata
+    user_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, onupdate=datetime.utcnow, nullable=True)
+    
+    __table_args__ = (
+        {"sqlite_autoincrement": True},
+    )
+
 
 # Note: Stock download tracking now uses shared tables from tefas.models:
 # - DownloadHistory (with data_type='stock', kind=interval, symbols=[...])

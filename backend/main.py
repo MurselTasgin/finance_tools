@@ -1,5 +1,6 @@
 # finance_tools/backend/main.py
 import os
+import json
 from pathlib import Path
 # Override database to use test database with data - MUST be set before any imports
 parent_dir = Path(__file__).parent.parent
@@ -1515,6 +1516,199 @@ async def get_stock_stats(session = Depends(get_db_session)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ===== STOCK GROUPS API ENDPOINTS =====
+
+@app.get("/api/stocks/groups")
+async def get_stock_groups(session = Depends(get_db_session)):
+    """Get all stock groups."""
+    try:
+        repo = StockRepository(session)
+        groups = repo.get_stock_groups()
+        
+        return {
+            "groups": [
+                {
+                    "id": g.id,
+                    "name": g.name,
+                    "description": g.description,
+                    "symbols": json.loads(g.symbols),
+                    "user_id": g.user_id,
+                    "created_at": g.created_at.isoformat(),
+                    "updated_at": g.updated_at.isoformat() if g.updated_at else None
+                }
+                for g in groups
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error getting stock groups: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/stocks/groups")
+async def create_stock_group(request: Dict[str, Any], session = Depends(get_db_session)):
+    """Create a new stock group."""
+    try:
+        repo = StockRepository(session)
+        
+        group = repo.create_stock_group(
+            name=request["name"],
+            description=request.get("description"),
+            symbols=request["symbols"],
+            user_id=request.get("user_id")
+        )
+        
+        return {
+            "id": group.id,
+            "name": group.name,
+            "description": group.description,
+            "symbols": json.loads(group.symbols),
+            "user_id": group.user_id,
+            "created_at": group.created_at.isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error creating stock group: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/stocks/groups/{group_id}")
+async def update_stock_group(group_id: int, request: Dict[str, Any], session = Depends(get_db_session)):
+    """Update a stock group."""
+    try:
+        repo = StockRepository(session)
+        
+        group = repo.update_stock_group(
+            group_id=group_id,
+            name=request.get("name"),
+            description=request.get("description"),
+            symbols=request.get("symbols")
+        )
+        
+        if not group:
+            raise HTTPException(status_code=404, detail="Stock group not found")
+        
+        return {
+            "id": group.id,
+            "name": group.name,
+            "description": group.description,
+            "symbols": json.loads(group.symbols),
+            "user_id": group.user_id,
+            "updated_at": group.updated_at.isoformat() if group.updated_at else None
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating stock group: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/stocks/records")
+async def get_stock_records(
+    page: int = Query(1, ge=1),
+    pageSize: int = Query(50, ge=1, le=1000),
+    search: str = Query(""),
+    sortBy: Optional[str] = Query(None),
+    sortDir: Optional[str] = Query("asc"),
+    filters: List[str] = Query([]),
+    session = Depends(get_db_session)
+):
+    """Get paginated stock records with filtering and sorting."""
+    try:
+        from finance_tools.stocks.repository import StockRepository
+        repo = StockRepository(session)
+        
+        # Get all stock symbols
+        symbols = repo.get_all_stock_symbols()
+        
+        # For now, return price history records
+        # TODO: Implement full pagination and filtering similar to ETF records
+        records_list = []
+        
+        # Convert to list of dicts
+        for symbol in symbols:
+            records = repo.get_price_history(symbol, None, None, '1d')
+            for record in records:
+                records_list.append({
+                    "id": record.id,
+                    "symbol": record.symbol,
+                    "date": record.date.isoformat() if record.date else None,
+                    "open": float(record.open) if record.open else None,
+                    "high": float(record.high) if record.high else None,
+                    "low": float(record.low) if record.low else None,
+                    "close": float(record.close) if record.close else None,
+                    "volume": int(record.volume) if record.volume else None,
+                })
+        
+        # Simple search filter
+        if search:
+            records_list = [r for r in records_list if search.lower() in r.get('symbol', '').lower()]
+        
+        total = len(records_list)
+        total_pages = (total + pageSize - 1) // pageSize
+        
+        # Apply pagination
+        start_idx = (page - 1) * pageSize
+        end_idx = start_idx + pageSize
+        paginated_data = records_list[start_idx:end_idx]
+        
+        return {
+            "data": paginated_data,
+            "total": total,
+            "page": page,
+            "pageSize": pageSize,
+            "totalPages": total_pages,
+        }
+    except Exception as e:
+        logger.error(f"Error getting stock records: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/stocks/columns")
+async def get_stock_columns():
+    """Get available column names for stock records."""
+    return [
+        "id",
+        "symbol",
+        "date",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume"
+    ]
+
+@app.get("/api/stocks/symbols")
+async def get_stock_symbols(session = Depends(get_db_session)):
+    """Get list of unique stock symbols."""
+    try:
+        from finance_tools.stocks.repository import StockRepository
+        repo = StockRepository(session)
+        symbols = repo.get_all_stock_symbols()
+        
+        return {
+            "symbols": [{"symbol": s} for s in symbols]
+        }
+    except Exception as e:
+        logger.error(f"Error getting stock symbols: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/stocks/groups/{group_id}")
+async def delete_stock_group(group_id: int, session = Depends(get_db_session)):
+    """Delete a stock group."""
+    try:
+        repo = StockRepository(session)
+        
+        success = repo.delete_stock_group(group_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Stock group not found")
+        
+        return {"message": "Stock group deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting stock group: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ===== ANALYTICS API ENDPOINTS =====
 
 # Import analytics service
@@ -1538,6 +1732,7 @@ def run_analysis_sync(analysis_type: str, analysis_name: str, parameters: dict, 
     - 'etf_technical': ETF technical analysis
     - 'etf_scan': ETF scan analysis
     - 'stock_technical': Stock technical analysis
+    - 'stock_scan': Stock scan analysis
     """
     global analysis_progress, active_analysis_tasks, analysis_progress_lock
     
@@ -1718,6 +1913,42 @@ def run_analysis_sync(analysis_type: str, analysis_name: str, parameters: dict, 
                 )
                 
                 log_progress("Stock technical analysis completed", 80, 'success')
+                
+            elif analysis_type == 'stock_scan':
+                logger.info(f"📊 Starting stock scan analysis...")
+                log_progress("Starting stock scan analysis", 10, 'info')
+                
+                analysis_result = analytics_service.run_stock_scan_analysis(
+                    db_session=session,
+                    symbols=parameters.get('symbols'),
+                    scanners=parameters.get('scanners'),
+                    scanner_configs=parameters.get('scanner_configs'),
+                    score_threshold=parameters.get('score_threshold', 0.0),
+                    start_date=parameters.get('start_date'),
+                    end_date=parameters.get('end_date'),
+                    column=parameters.get('column', 'close'),
+                    ema_short=parameters.get('ema_short', 20),
+                    ema_long=parameters.get('ema_long', 50),
+                    macd_slow=parameters.get('macd_slow', 26),
+                    macd_fast=parameters.get('macd_fast', 12),
+                    macd_sign=parameters.get('macd_sign', 9),
+                    rsi_window=parameters.get('rsi_window', 14),
+                    rsi_lower=parameters.get('rsi_lower', 30.0),
+                    rsi_upper=parameters.get('rsi_upper', 70.0),
+                    volume_window=parameters.get('volume_window', 20),
+                    stoch_k_period=parameters.get('stoch_k_period', 14),
+                    stoch_d_period=parameters.get('stoch_d_period', 3),
+                    atr_window=parameters.get('atr_window', 14),
+                    adx_window=parameters.get('adx_window', 14),
+                    weights=parameters.get('weights'),
+                    buy_threshold=parameters.get('buy_threshold', 1.0),
+                    sell_threshold=parameters.get('sell_threshold', 1.0),
+                    sector=parameters.get('sector'),
+                    industry=parameters.get('industry'),
+                    save_results=False,  # Don't save here - backend will save after this returns
+                )
+                
+                log_progress("Stock scan analysis completed", 80, 'success')
             else:
                 raise ValueError(f"Unknown analysis type: {analysis_type}")
             
@@ -1869,7 +2100,7 @@ async def start_analysis_task(request: Dict[str, Any]):
     
     Request body:
     {
-        "analysis_type": "etf_technical|etf_scan|stock_technical",
+        "analysis_type": "etf_technical|etf_scan|stock_technical|stock_scan",
         "analysis_name": "Human readable name",
         "parameters": { ... analysis-specific parameters ... }
     }
@@ -2224,6 +2455,51 @@ async def run_stock_technical_analysis(
         return result
     except Exception as e:
         logger.error(f"Error in stock technical analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/analytics/stock/scan")
+async def run_stock_scan_analysis(
+    request: Dict[str, Any],
+    session = Depends(get_db_session)
+):
+    """
+    Run stock scan analysis for buy/sell/hold recommendations.
+    
+    Request body:
+    {
+        "symbols": ["AAPL", "MSFT"],
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "column": "close",
+        "ema_short": 20,
+        "ema_long": 50,
+        "rsi_window": 14,
+        "rsi_lower": 30.0,
+        "rsi_upper": 70.0,
+        "volume_window": 20,
+        "stoch_k_period": 14,
+        "stoch_d_period": 3,
+        "atr_window": 14,
+        "adx_window": 14,
+        "buy_threshold": 1.0,
+        "sell_threshold": 1.0,
+        "sector": "Technology",
+        "industry": "Software",
+        "scanners": ["ema_cross", "macd", "rsi", "volume", "stochastic"],
+        "scanner_configs": {...},
+        "weights": {...},
+        "user_id": "user123"
+    }
+    """
+    try:
+        result = analytics_service.run_stock_scan_analysis(
+            db_session=session,
+            **request
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error in stock scan analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

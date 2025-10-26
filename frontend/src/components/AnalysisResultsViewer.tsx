@@ -93,6 +93,11 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(50);
+  
+  // Additional filters
+  const [scoreFilter, setScoreFilter] = useState<string>('all'); // 'all', 'positive', 'negative', 'zero'
+  const [recommendationFilter, setRecommendationFilter] = useState<string>('all'); // 'all', 'BUY', 'SELL', 'HOLD'
+  const [symbolFilter, setSymbolFilter] = useState<string>('');
 
 
   // Process results based on analysis type
@@ -107,6 +112,38 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
     if (searchTerm) {
       processed = processed.filter((item: any) => {
         return JSON.stringify(item).toLowerCase().includes(searchTerm.toLowerCase());
+      });
+    }
+    
+    // Apply score filter
+    if (scoreFilter !== 'all') {
+      processed = processed.filter((item: any) => {
+        const score = item.score || 0;
+        switch (scoreFilter) {
+          case 'positive':
+            return score > 0;
+          case 'negative':
+            return score < 0;
+          case 'zero':
+            return score === 0;
+          default:
+            return true;
+        }
+      });
+    }
+    
+    // Apply recommendation filter
+    if (recommendationFilter !== 'all') {
+      processed = processed.filter((item: any) => {
+        return item.recommendation === recommendationFilter;
+      });
+    }
+    
+    // Apply symbol filter
+    if (symbolFilter) {
+      processed = processed.filter((item: any) => {
+        const symbol = item.symbol || item.code || '';
+        return symbol.toLowerCase().includes(symbolFilter.toLowerCase());
       });
     }
 
@@ -124,7 +161,7 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
     }
 
     return processed;
-  }, [result.results, searchTerm, sortField, sortOrder]);
+  }, [result.results, searchTerm, sortField, sortOrder, scoreFilter, recommendationFilter, symbolFilter]);
 
   // Get paginated results
   const paginatedResults = useMemo(() => {
@@ -206,6 +243,11 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
       return renderEtfScanTable();
     }
 
+    // Special rendering for Stock scan results (same as ETF scan)
+    if (result.analysis_type === 'stock_scan') {
+      return renderStockScanTable();
+    }
+
     const firstItem = result.results[0];
     if (typeof firstItem !== 'object' || firstItem === null) {
       return (
@@ -263,17 +305,33 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
           <Table stickyHeader>
             <TableHead>
               <TableRow>
-                {columns.map((column) => (
-                  <TableCell key={column}>
-                    <TableSortLabel
-                      active={sortField === column}
-                      direction={sortField === column ? sortOrder : 'asc'}
-                      onClick={() => handleSort(column)}
-                    >
-                      {column}
-                    </TableSortLabel>
-                  </TableCell>
-                ))}
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === (result.analysis_type === 'stock_scan' ? 'symbol' : 'code')}
+                    direction={sortField === (result.analysis_type === 'stock_scan' ? 'symbol' : 'code') ? sortOrder : 'asc'}
+                    onClick={() => handleSort(result.analysis_type === 'stock_scan' ? 'symbol' : 'code')}
+                  >
+                    {result.analysis_type === 'stock_scan' ? 'Symbol' : 'Code'}
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'recommendation'}
+                    direction={sortField === 'recommendation' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('recommendation')}
+                  >
+                    Recommendation
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'score'}
+                    direction={sortField === 'score' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('score')}
+                  >
+                    Score
+                  </TableSortLabel>
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -306,57 +364,147 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
     );
   };
 
+  const renderStockScanTable = () => {
+    return renderEtfScanTable();  // Use ETF table format with symbols instead of codes
+  };
+
   const renderEtfScanTable = () => {
     return (
       <Box>
-        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2} flexWrap="wrap" gap={2}>
           <Typography variant="h6">
-            ETF Scan Results ({processedResults.length} items)
+            {result.analysis_type === 'stock_scan' ? 'Stock' : 'ETF'} Scan Results ({processedResults.length} items)
           </Typography>
-          <Box display="flex" gap={2} alignItems="center">
-            <TextField
-              size="small"
-              placeholder="Search by code..."
-              value={searchTerm}
+        </Box>
+        
+        {/* Advanced Filters */}
+        <Box display="flex" gap={2} alignItems="center" mb={2} flexWrap="wrap">
+          <TextField
+            size="small"
+            placeholder={`Search by ${result.analysis_type === 'stock_scan' ? 'symbol' : 'code'}...`}
+            value={searchTerm}
+            onChange={(e) => {
+              setSearchTerm(e.target.value);
+              setPage(0);
+            }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+            }}
+          />
+          
+          <TextField
+            size="small"
+            placeholder="Filter by symbol..."
+            value={symbolFilter}
+            onChange={(e) => {
+              setSymbolFilter(e.target.value);
+              setPage(0);
+            }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon />
+                </InputAdornment>
+              ),
+            }}
+          />
+          
+          <FormControl size="small" sx={{ minWidth: 120 }}>
+            <InputLabel>Score Filter</InputLabel>
+            <Select
+              value={scoreFilter}
+              label="Score Filter"
               onChange={(e) => {
-                setSearchTerm(e.target.value);
-                setPage(0); // Reset to first page on search
+                setScoreFilter(e.target.value);
+                setPage(0);
               }}
-              InputProps={{
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon />
-                  </InputAdornment>
-                ),
+            >
+              <MenuItem value="all">All Scores</MenuItem>
+              <MenuItem value="positive">Positive (&gt;0)</MenuItem>
+              <MenuItem value="negative">Negative (&lt;0)</MenuItem>
+              <MenuItem value="zero">Zero (=0)</MenuItem>
+            </Select>
+          </FormControl>
+          
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <InputLabel>Recommendation</InputLabel>
+            <Select
+              value={recommendationFilter}
+              label="Recommendation"
+              onChange={(e) => {
+                setRecommendationFilter(e.target.value);
+                setPage(0);
               }}
-            />
-            <FormControl size="small" sx={{ minWidth: 150 }}>
-              <InputLabel>Sort by</InputLabel>
-              <Select
-                value={sortField}
-                label="Sort by"
-                onChange={(e) => {
-                  setSortField(e.target.value);
-                  setPage(0); // Reset to first page on sort change
-                }}
-              >
-                <MenuItem value="">No sorting</MenuItem>
-                <MenuItem value="code">Code</MenuItem>
-                <MenuItem value="score">Score</MenuItem>
-                <MenuItem value="recommendation">Recommendation</MenuItem>
-              </Select>
-            </FormControl>
-          </Box>
+            >
+              <MenuItem value="all">All</MenuItem>
+              <MenuItem value="BUY">BUY</MenuItem>
+              <MenuItem value="SELL">SELL</MenuItem>
+              <MenuItem value="HOLD">HOLD</MenuItem>
+            </Select>
+          </FormControl>
+          
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <InputLabel>Sort by</InputLabel>
+            <Select
+              value={sortField}
+              label="Sort by"
+              onChange={(e) => {
+                setSortField(e.target.value);
+                setPage(0);
+              }}
+            >
+              <MenuItem value="">No sorting</MenuItem>
+              <MenuItem value={result.analysis_type === 'stock_scan' ? 'symbol' : 'code'}>{result.analysis_type === 'stock_scan' ? 'Symbol' : 'Code'}</MenuItem>
+              <MenuItem value="score">Score</MenuItem>
+              <MenuItem value="recommendation">Recommendation</MenuItem>
+            </Select>
+          </FormControl>
         </Box>
 
         <TableContainer component={Paper} sx={{ maxHeight: 600 }}>
           <Table stickyHeader>
             <TableHead>
               <TableRow>
-                <TableCell>Code</TableCell>
-                <TableCell>Recommendation</TableCell>
-                <TableCell>Score</TableCell>
-                <TableCell>Last Value</TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === (result.analysis_type === 'stock_scan' ? 'symbol' : 'code')}
+                    direction={sortField === (result.analysis_type === 'stock_scan' ? 'symbol' : 'code') ? sortOrder : 'asc'}
+                    onClick={() => handleSort(result.analysis_type === 'stock_scan' ? 'symbol' : 'code')}
+                  >
+                    {result.analysis_type === 'stock_scan' ? 'Symbol' : 'Code'}
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'recommendation'}
+                    direction={sortField === 'recommendation' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('recommendation')}
+                  >
+                    Recommendation
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'score'}
+                    direction={sortField === 'score' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('score')}
+                  >
+                    Score
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={sortField === 'last_value'}
+                    direction={sortField === 'last_value' ? sortOrder : 'asc'}
+                    onClick={() => handleSort('last_value')}
+                  >
+                    Last Value
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell>Technical Indicators</TableCell>
                 <TableCell>Score Contributions</TableCell>
                 <TableCell>Reasons</TableCell>
@@ -367,7 +515,7 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
                 <TableRow key={page * rowsPerPage + index} hover>
                   <TableCell>
                     <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                      {item.code}
+                      {item.symbol || item.code}
                     </Typography>
                   </TableCell>
                   <TableCell>
@@ -413,22 +561,39 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
                   <TableCell>
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                       {item.components ? (
-                        Object.entries(item.components).map(([key, value]) => (
-                          <Box key={key} sx={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                            <Typography variant="caption" color="textSecondary">
-                              {key.replace('_', ' ').toUpperCase()}:
-                            </Typography>
-                            <Typography 
-                              variant="caption" 
-                              sx={{ 
-                                fontWeight: 'bold',
-                                color: (typeof value === 'number' && value > 0) ? 'success.main' : (typeof value === 'number' && value < 0) ? 'error.main' : 'text.secondary'
-                              }}
-                            >
-                              {typeof value === 'number' ? value.toFixed(3) : 'N/A'}
-                            </Typography>
-                          </Box>
-                        ))
+                        Object.entries(item.components).map(([key, value]) => {
+                          // Handle both old format (number) and new format (object with raw, weight, contribution)
+                          const isObject = typeof value === 'object' && value !== null;
+                          const contribution = isObject ? (value as any).contribution : value;
+                          const raw = isObject ? (value as any).raw : 0;
+                          const weight = isObject ? (value as any).weight : 0;
+                          
+                          return (
+                            <Box key={key} sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, fontSize: '0.7rem', mb: 0.5 }}>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                                <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 'bold' }}>
+                                  {key.replace('_', ' ').toUpperCase()}:
+                                </Typography>
+                                <Typography 
+                                  variant="caption" 
+                                  sx={{ 
+                                    fontWeight: 'bold',
+                                    color: (typeof contribution === 'number' && contribution > 0) ? 'success.main' : (typeof contribution === 'number' && contribution < 0) ? 'error.main' : 'text.secondary'
+                                  }}
+                                >
+                                  {typeof contribution === 'number' ? contribution.toFixed(3) : 'N/A'}
+                                </Typography>
+                              </Box>
+                              {isObject && weight > 0 && (
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', pl: 1 }}>
+                                  <Typography variant="caption" color="textSecondary">
+                                    Raw: {raw.toFixed(3)} × {weight} =
+                                  </Typography>
+                                </Box>
+                              )}
+                            </Box>
+                          );
+                        })
                       ) : (
                         <Typography variant="caption" color="textSecondary">
                           No components data

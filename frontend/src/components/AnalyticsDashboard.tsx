@@ -9,6 +9,7 @@ import {
 import { ETFTechnicalAnalysisForm } from './ETFTechnicalAnalysisForm';
 import { AnalysisResultsViewer } from './AnalysisResultsViewer';
 import { ETFScanAnalysisForm } from './ETFScanAnalysisForm';
+import { StockScanAnalysisForm } from './StockScanAnalysisForm';
 import AnalysisJobsPanel from './AnalysisJobsPanel';
 import AnalysisResultsPanel from './AnalysisResultsPanel';
 import {
@@ -352,6 +353,15 @@ export const AnalyticsDashboard: React.FC = () => {
                 >
                   Stock Technical Analysis
                 </Button>
+
+                <Button
+                  variant="outlined"
+                  fullWidth
+                  onClick={() => setActiveTab(3)}
+                  startIcon={<SearchIcon />}
+                >
+                  Stock Scan Analysis
+                </Button>
               </Stack>
             </CardContent>
           </Card>
@@ -399,6 +409,7 @@ export const AnalyticsDashboard: React.FC = () => {
             <Tab label="ETF Technical" />
             <Tab label="ETF Scan" />
             <Tab label="Stock Technical" />
+            <Tab label="Stock Scan" />
             <Tab label="Jobs & History" />
             <Tab label="Results & History" />
           </Tabs>
@@ -429,10 +440,18 @@ export const AnalyticsDashboard: React.FC = () => {
         </TabPanel>
 
         <TabPanel value={activeTab} index={3}>
-          <AnalysisJobsPanel />
+          <StockScanAnalysisPanel
+            capabilities={capabilities}
+            onRunAnalysis={runAnalysis}
+            running={runningAnalysis === 'stock_scan'}
+          />
         </TabPanel>
 
         <TabPanel value={activeTab} index={4}>
+          <AnalysisJobsPanel />
+        </TabPanel>
+
+        <TabPanel value={activeTab} index={5}>
           <AnalysisResultsPanel />
         </TabPanel>
       </Paper>
@@ -517,6 +536,13 @@ const StockTechnicalAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysi
       {running ? 'Running Analysis...' : 'Run Sample Analysis'}
     </Button>
   </Box>
+);
+
+const StockScanAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysis, running }) => (
+  <StockScanAnalysisForm
+    onRunAnalysis={(parameters) => onRunAnalysis('stock_scan', 'Stock Scan Analysis', parameters)}
+    running={running}
+  />
 );
 
 const ResultsHistoryPanel: React.FC<any> = ({

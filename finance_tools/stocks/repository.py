@@ -9,13 +9,14 @@ for unified download tracking across all data types.
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from typing import List, Optional, Dict, Any, Tuple
 from sqlalchemy import select, func, desc, and_, or_
 from sqlalchemy.orm import Session
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-from .models import StockPriceHistory, StockInfo, Base
+from .models import StockPriceHistory, StockInfo, StockGroup, Base
 from ..etfs.tefas.models import DownloadHistory, DownloadProgressLog
 from ..logging import get_logger
 
@@ -699,3 +700,91 @@ class StockRepository:
                 ).total_seconds() if download.start_time else 0
             }
         }
+    
+    # ==================== Stock Group Operations ====================
+    
+    def create_stock_group(
+        self,
+        name: str,
+        description: Optional[str],
+        symbols: List[str],
+        user_id: Optional[str] = None
+    ) -> StockGroup:
+        """Create a new stock group."""
+        try:
+            group = StockGroup(
+                name=name,
+                description=description,
+                symbols=json.dumps(symbols),
+                user_id=user_id,
+                created_at=datetime.utcnow()
+            )
+            self.session.add(group)
+            self.session.commit()
+            self.logger.info(f"Created stock group: {name} with {len(symbols)} symbols")
+            return group
+        except Exception as e:
+            self.logger.error(f"Error creating stock group: {e}")
+            self.session.rollback()
+            raise
+    
+    def get_stock_groups(self, user_id: Optional[str] = None) -> List[StockGroup]:
+        """Get all stock groups, optionally filtered by user."""
+        query = select(StockGroup)
+        if user_id:
+            query = query.where(StockGroup.user_id == user_id)
+        query = query.order_by(StockGroup.created_at.desc())
+        result = self.session.execute(query)
+        return list(result.scalars().all())
+    
+    def get_stock_group(self, group_id: int) -> Optional[StockGroup]:
+        """Get a specific stock group by ID."""
+        result = self.session.execute(
+            select(StockGroup).where(StockGroup.id == group_id)
+        )
+        return result.scalar_one_or_none()
+    
+    def update_stock_group(
+        self,
+        group_id: int,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        symbols: Optional[List[str]] = None
+    ) -> Optional[StockGroup]:
+        """Update an existing stock group."""
+        try:
+            group = self.get_stock_group(group_id)
+            if not group:
+                return None
+            
+            if name:
+                group.name = name
+            if description is not None:
+                group.description = description
+            if symbols:
+                group.symbols = json.dumps(symbols)
+            group.updated_at = datetime.utcnow()
+            
+            self.session.commit()
+            self.logger.info(f"Updated stock group: {group_id}")
+            return group
+        except Exception as e:
+            self.logger.error(f"Error updating stock group: {e}")
+            self.session.rollback()
+            raise
+    
+    def delete_stock_group(self, group_id: int) -> bool:
+        """Delete a stock group."""
+        try:
+            group = self.get_stock_group(group_id)
+            if not group:
+                return False
+            
+            self.session.delete(group)
+            self.session.commit()
+            self.logger.info(f"Deleted stock group: {group_id}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error deleting stock group: {e}")
+            self.session.rollback()
+            return False

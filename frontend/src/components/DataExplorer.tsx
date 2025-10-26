@@ -45,14 +45,16 @@ import {
   Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useQuery } from 'react-query';
-import { dataApi } from '../services/api';
-import { FundRecord, FilterOptions, SortOptions, DataExplorerState, Fund } from '../types';
+import { dataApi, stockApi } from '../services/api';
+import { FundRecord, FilterOptions, SortOptions, DataExplorerState, Fund, PaginatedResponse } from '../types';
 import { PlotViewer } from './PlotViewer';
 import { FilterDialog } from './FilterDialog';
 
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 200];
 
 export const DataExplorer: React.FC = () => {
+  const [dataType, setDataType] = useState<'etf' | 'stock'>('etf');
+  
   const [state, setState] = useState<DataExplorerState>({
     page: 0,
     pageSize: 50,
@@ -82,23 +84,44 @@ export const DataExplorer: React.FC = () => {
     data: recordsData,
     isLoading,
     error,
-  } = useQuery(
-    ['records', state.page + 1, state.pageSize, state.filters, state.sort, state.searchTerm],
-    () =>
-      dataApi.getRecords(
+  } = useQuery<PaginatedResponse<any>>(
+    ['records', dataType, state.page + 1, state.pageSize, state.filters, state.sort, state.searchTerm],
+    () => {
+      if (dataType === 'stock') {
+        return stockApi.getRecords(
+          state.page + 1,
+          state.pageSize,
+          state.filters,
+          state.sort,
+          state.searchTerm
+        );
+      }
+      return dataApi.getRecords(
         state.page + 1,
         state.pageSize,
         state.filters,
         state.sort,
         state.searchTerm
-      ),
+      );
+    },
     {
       keepPreviousData: true,
     }
   );
 
-  const { data: columns } = useQuery('columns', dataApi.getColumns);
-  const { data: funds } = useQuery('funds', dataApi.getFunds);
+  const { data: columns } = useQuery(['columns', dataType], () => {
+    if (dataType === 'stock') {
+      return stockApi.getColumns();
+    }
+    return dataApi.getColumns();
+  });
+  const { data: funds } = useQuery<any[]>(['funds', dataType], async () => {
+    if (dataType === 'stock') {
+      const response = await stockApi.getSymbols();
+      return response.symbols;
+    }
+    return await dataApi.getFunds();
+  });
 
   const handlePageChange = (event: unknown, newPage: number) => {
     setState(prev => ({ ...prev, page: newPage }));
@@ -214,9 +237,22 @@ export const DataExplorer: React.FC = () => {
 
   return (
     <Box>
+      {/* Tabs for ETF/Stock selection */}
+      <Paper sx={{ mb: 3 }}>
+        <Tabs 
+          value={dataType === 'etf' ? 0 : 1} 
+          onChange={(e, value) => setDataType(value === 0 ? 'etf' : 'stock')}
+          indicatorColor="primary"
+          textColor="primary"
+        >
+          <Tab label="ETFs" />
+          <Tab label="Stocks" />
+        </Tabs>
+      </Paper>
+
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h4" component="h1">
-          Data Explorer
+          {dataType === 'etf' ? 'ETF' : 'Stock'} Data Explorer
         </Typography>
         <Box>
           <Button
@@ -324,7 +360,7 @@ export const DataExplorer: React.FC = () => {
                   </TableCell>
                 </TableRow>
               ) : (
-                recordsData?.data.map((record) => (
+                recordsData?.data.map((record: any) => (
                   <TableRow key={record.id} hover>
                     {columns?.map((column) => (
                       <TableCell key={column}>
@@ -375,9 +411,9 @@ export const DataExplorer: React.FC = () => {
                       <MenuItem value="">
                         <em>All Funds</em>
                       </MenuItem>
-                      {funds?.map((fund) => (
-                        <MenuItem key={fund.code} value={fund.code}>
-                          {fund.code} - {fund.title}
+                      {funds?.map((fund: any) => (
+                        <MenuItem key={dataType === 'stock' ? fund.symbol : fund.code} value={dataType === 'stock' ? fund.symbol : fund.code}>
+                          {dataType === 'stock' ? fund.symbol : `${fund.code} - ${fund.title}`}
                         </MenuItem>
                       ))}
                     </Select>
@@ -486,7 +522,7 @@ export const DataExplorer: React.FC = () => {
             xColumn={plotConfig.xColumn} 
             yColumn={plotConfig.yColumn}
             fundCode={plotConfig.fundCode}
-            fundTitle={funds?.find(f => f.code === plotConfig.fundCode)?.title}
+             fundTitle={dataType === 'stock' ? funds?.find((f: any) => f.symbol === plotConfig.fundCode)?.symbol : funds?.find((f: any) => f.code === plotConfig.fundCode)?.title}
             startDate={plotConfig.startDate}
             endDate={plotConfig.endDate}
           />
