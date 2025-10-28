@@ -1,5 +1,5 @@
 // TechnicalChart/types/chart.types.ts
-import { IChartApi, ISeriesApi, Time, UTCTimestamp } from 'lightweight-charts';
+import { IChartApi, ISeriesApi, Time, UTCTimestamp, Logical } from 'lightweight-charts';
 
 /**
  * Asset type for the chart
@@ -111,6 +111,48 @@ export interface IndicatorSeries {
 }
 
 /**
+ * Supported drawing tool identifiers
+ */
+export type DrawingTool =
+  | 'trendline'
+  | 'horizontal-line'
+  | 'vertical-line'
+  | 'parallel-channel';
+
+/**
+ * Point in time/price space used for drawings
+ */
+export interface DrawingPoint {
+  time: Time;
+  price: number;
+  logical?: Logical;
+}
+
+/**
+ * Screen coordinate used for fallback rendering
+ */
+export interface ScreenPoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Configuration for a drawing element rendered on top of the chart
+ */
+export interface ChartDrawing {
+  id: string;
+  type: DrawingTool;
+  points: DrawingPoint[];
+  screenPoints?: ScreenPoint[];
+  color?: string;
+  secondaryColor?: string;
+  lineWidth?: number;
+  opacity?: number;
+  panelId?: string;
+  locked?: boolean;
+}
+
+/**
  * Chart configuration options
  */
 export interface ChartOptions {
@@ -130,16 +172,35 @@ export interface ChartOptions {
 }
 
 /**
+ * Panel type
+ */
+export type PanelType = 'main' | 'indicator';
+
+/**
  * Panel configuration for multi-panel layout
  */
 export interface ChartPanel {
   id: string;
   title: string;
-  height: number; // percentage or pixels
-  indicators: string[]; // indicator IDs
+  type: PanelType;
+  heightPercent: number; // Height as percentage of total (0-100)
+  minHeight: number; // Minimum height in pixels
+  maxHeight?: number; // Maximum height in pixels (optional)
+  indicators: string[]; // indicator IDs rendered in this panel
   visible: boolean;
   chartApi?: IChartApi;
   series: Map<string, ISeriesApi<any>>;
+  order: number; // Display order (0 = top)
+}
+
+/**
+ * Panel resize event
+ */
+export interface PanelResizeEvent {
+  panelId: string;
+  oldHeightPercent: number;
+  newHeightPercent: number;
+  adjacentPanelId?: string; // Panel that should adjust in opposite direction
 }
 
 /**
@@ -186,8 +247,10 @@ export interface TechnicalChartContainerProps {
   indicatorParameters: Record<string, Record<string, any>>;
   onDataLoad?: (data: ChartDataResponse) => void;
   onError?: (error: string) => void;
+  onIndicatorsChange?: (indicators: string[], parameters: Record<string, Record<string, any>>) => void;
   height?: number;
   theme?: ChartTheme;
+  showToolbar?: boolean;
 }
 
 /**
@@ -200,4 +263,41 @@ export interface ChartCanvasProps {
   onCrosshairMove?: (data: CrosshairData | null) => void;
   onVisibleRangeChange?: (range: { from: Time; to: Time }) => void;
   onPanelResize?: (panelId: string, newHeight: number) => void;
+}
+
+/**
+ * Indicator configuration for UI
+ */
+export interface IndicatorConfig {
+  id: string;
+  name: string;
+  description: string;
+  type: 'overlay' | 'subplot';
+  defaultParameters: Record<string, any>;
+  parameterDefinitions: ParameterDefinition[];
+}
+
+/**
+ * Parameter definition for indicator configuration
+ */
+export interface ParameterDefinition {
+  key: string;
+  label: string;
+  type: 'number' | 'select' | 'boolean';
+  defaultValue: any;
+  min?: number;
+  max?: number;
+  step?: number;
+  options?: Array<{ label: string; value: any }>;
+  description?: string;
+}
+
+/**
+ * Indicator panel assignment
+ */
+export interface IndicatorPanelAssignment {
+  indicatorId: string;
+  panelId: string;
+  visible: boolean;
+  order: number; // Order within the panel
 }

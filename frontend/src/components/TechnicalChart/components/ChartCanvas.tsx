@@ -156,7 +156,7 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
     // Setup resize observer
     const resizeObserver = new ResizeObserver((entries) => {
       if (entries.length === 0 || entries[0].target !== chartContainerRef.current) return;
-      const { width, height } = entries[0].contentRect;
+      const { width } = entries[0].contentRect;
       chart.applyOptions({ width, height: options.height });
     });
 
