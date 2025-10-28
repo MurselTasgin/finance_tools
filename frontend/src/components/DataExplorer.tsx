@@ -1,5 +1,5 @@
 // finance_tools/frontend/src/components/DataExplorer.tsx
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Box,
   Card,
@@ -17,7 +17,6 @@ import {
   TablePagination,
   TableSortLabel,
   Chip,
-  IconButton,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -31,7 +30,6 @@ import {
   Alert,
   Tabs,
   Tab,
-  Divider,
 } from '@mui/material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
@@ -41,12 +39,10 @@ import {
   FilterList as FilterIcon,
   BarChart as ChartIcon,
   Clear as ClearIcon,
-  Add as AddIcon,
-  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useQuery } from 'react-query';
 import { dataApi, stockApi } from '../services/api';
-import { FundRecord, FilterOptions, SortOptions, DataExplorerState, Fund, PaginatedResponse } from '../types';
+import { FilterOptions, DataExplorerState, PaginatedResponse } from '../types';
 import { PlotViewer } from './PlotViewer';
 import { FilterDialog } from './FilterDialog';
 

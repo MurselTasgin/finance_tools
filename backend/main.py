@@ -2522,6 +2522,177 @@ async def run_stock_scan_analysis(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/analytics/technical/chart")
+async def get_technical_chart_data(request: Dict[str, Any]):
+    """
+    Generate technical analysis timeseries with indicators for stocks or ETFs.
+
+    Request body:
+    {
+        "asset_type": "stock" | "etf",
+        "identifier": "AAPL" | "NNF",
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "interval": "1d",
+        "indicators": {
+            "ema_cross": { "short": 20, "long": 50 },
+            ...
+        }
+    }
+    """
+    try:
+        asset_type = (request.get("asset_type") or "stock").lower()
+        identifier = request.get("identifier")
+        if not identifier:
+            raise HTTPException(status_code=400, detail="Identifier (symbol or code) is required")
+
+        start_date_str = request.get("start_date")
+        end_date_str = request.get("end_date")
+        interval = request.get("interval", "1d")
+        indicators_payload = request.get("indicators", {})
+
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date() if start_date_str else None
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date() if end_date_str else None
+
+        identifier = identifier.strip().upper()
+
+        if asset_type == "stock":
+            from finance_tools.stocks.analysis.retriever import StockDataRetriever
+
+            retriever = StockDataRetriever()
+            df = retriever.fetch_info(
+                symbols=[identifier],
+                start=start_date,
+                end=end_date,
+                interval=interval
+            )
+            if df.empty:
+                raise HTTPException(status_code=404, detail=f"No stock data found for {identifier}")
+
+            df_asset = df[df["symbol"] == identifier].copy()
+            if df_asset.empty:
+                raise HTTPException(status_code=404, detail=f"No stock data available for {identifier}")
+
+            price_column = "close"
+            volume_column = "volume" if "volume" in df_asset.columns else None
+            metadata = {
+                "symbol": identifier,
+                "price_column": price_column,
+                "volume_column": volume_column,
+                "interval": interval,
+            }
+        elif asset_type == "etf":
+            from finance_tools.etfs.analysis.retriever import EtfDataRetriever
+
+            retriever = EtfDataRetriever()
+            df = retriever.fetch_info(
+                codes=[identifier],
+                start=start_date,
+                end=end_date,
+            )
+
+            if df.empty:
+                raise HTTPException(status_code=404, detail=f"No ETF data found for {identifier}")
+
+            df_asset = df[df["code"] == identifier].copy()
+            if df_asset.empty:
+                raise HTTPException(status_code=404, detail=f"No ETF data available for {identifier}")
+
+            price_column = "price"
+            metadata = {
+                "code": identifier,
+                "price_column": price_column,
+                "interval": "1d",  # ETF data currently daily
+            }
+        else:
+            raise HTTPException(status_code=400, detail="asset_type must be 'stock' or 'etf'")
+
+        df_asset = df_asset.sort_values("date").reset_index(drop=True)
+        if df_asset.empty:
+            raise HTTPException(status_code=404, detail="No data available for requested parameters")
+
+        # Apply indicators
+        from finance_tools.analysis.indicators import registry as indicator_registry, IndicatorConfig
+
+        indicator_summaries = []
+        indicator_snapshots = {}
+        base_columns = set(df_asset.columns)
+
+        # Ensure indicators payload is dict
+        if isinstance(indicators_payload, list):
+            indicators_payload = {indicator_id: {} for indicator_id in indicators_payload}
+
+        for indicator_id, params in indicators_payload.items():
+            indicator = indicator_registry.get(indicator_id)
+            if indicator is None:
+                logger.warning(f"Unknown indicator requested: {indicator_id}")
+                continue
+
+            supported = indicator.get_asset_types()
+            if asset_type not in supported and "universal" not in supported:
+                logger.warning(f"Indicator {indicator_id} not supported for asset type {asset_type}")
+                continue
+
+            config = IndicatorConfig(
+                name=indicator.get_name(),
+                parameters=params or {},
+                weight=0.0
+            )
+
+            before_columns = set(df_asset.columns)
+            try:
+                df_asset = indicator.calculate(df_asset, price_column, config)
+            except Exception as exc:
+                logger.error(f"Error calculating indicator {indicator_id}: {exc}")
+                continue
+
+            new_columns = [col for col in df_asset.columns if col not in before_columns]
+            indicator_summaries.append({
+                "id": indicator_id,
+                "name": indicator.get_name(),
+                "description": indicator.get_description(),
+                "columns": new_columns,
+                "parameters": params or {}
+            })
+
+            if new_columns:
+                last_row = df_asset.iloc[-1]
+                snapshot_values = {}
+                for col in new_columns:
+                    value = last_row.get(col)
+                    if pd.isnull(value):
+                        snapshot_values[col] = None
+                    else:
+                        try:
+                            snapshot_values[col] = float(value)
+                        except (TypeError, ValueError):
+                            snapshot_values[col] = value
+                indicator_snapshots[indicator_id] = snapshot_values
+
+        df_asset["date"] = pd.to_datetime(df_asset["date"])
+        records = json.loads(df_asset.to_json(orient="records", date_format="iso"))
+
+        return {
+            "asset_type": asset_type,
+            "identifier": identifier,
+            "price_column": price_column,
+            "interval": interval,
+            "start_date": start_date_str,
+            "end_date": end_date_str,
+            "columns": list(df_asset.columns),
+            "indicator_definitions": indicator_summaries,
+            "indicator_snapshots": indicator_snapshots,
+            "timeseries": records,
+            "metadata": metadata,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating technical chart data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/analytics/indicators")
 async def get_indicators(
     asset_type: Optional[str] = Query(

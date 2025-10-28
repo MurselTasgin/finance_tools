@@ -6,9 +6,9 @@ import {
   DialogContent,
   DialogActions,
 } from '@mui/material';
-import { ETFTechnicalAnalysisForm } from './ETFTechnicalAnalysisForm';
 import { AnalysisResultsViewer } from './AnalysisResultsViewer';
 import { UnifiedScanAnalysisPanel } from './UnifiedScanAnalysisPanel';
+import { UnifiedTechnicalAnalysisPanel, TechnicalAnalysisInitialState } from './UnifiedTechnicalAnalysisPanel';
 import AnalysisJobsPanel from './AnalysisJobsPanel';
 import AnalysisResultsPanel from './AnalysisResultsPanel';
 import {
@@ -25,34 +25,15 @@ import {
   Alert,
   CircularProgress,
   Divider,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemIcon,
   IconButton,
-  Tooltip,
-  TextField,
-  InputAdornment,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  SelectChangeEvent,
   Stack,
 } from '@mui/material';
 import {
   Analytics as AnalyticsIcon,
-  TrendingUp as TrendingUpIcon,
   Assessment as AssessmentIcon,
   History as HistoryIcon,
-  PlayArrow as PlayIcon,
-  Search as SearchIcon,
-  Timeline as TimelineIcon,
   ShowChart as ChartIcon,
-  Refresh as RefreshIcon,
   Download as DownloadIcon,
-  Favorite as FavoriteIcon,
-  FavoriteBorder as FavoriteBorderIcon,
   Close as CloseIcon,
 } from '@mui/icons-material';
 import { analyticsApi } from '../services/api';
@@ -80,17 +61,6 @@ interface AnalysisResult {
   error?: string;
 }
 
-interface HistoryItem {
-  id: number;
-  analysis_type: string;
-  analysis_name: string;
-  parameters: any;
-  executed_at: string;
-  execution_time_ms: number;
-  is_favorite: boolean;
-  access_count: number;
-}
-
 interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
@@ -114,41 +84,16 @@ export const AnalyticsDashboard: React.FC = () => {
 
   // Analysis state
   const [runningAnalysis, setRunningAnalysis] = useState<string | null>(null);
-  const [analysisResults, setAnalysisResults] = useState<AnalysisResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<AnalysisResult | null>(null);
   const [resultsDialogOpen, setResultsDialogOpen] = useState(false);
-  const [analysisProgress, setAnalysisProgress] = useState<{[key: string]: number}>({});
-
-  // History state
-  const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-
-  // Filter state
-  const [searchTerm, setSearchTerm] = useState('');
-  const [filterType, setFilterType] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<string>('date');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [technicalRerunData, setTechnicalRerunData] = useState<TechnicalAnalysisInitialState | null>(null);
 
   // Rerun state - for pre-populating forms when rerunning analyses
   const [rerunScanData, setRerunScanData] = useState<{ assetType: 'stock' | 'etf'; parameters: any } | null>(null);
 
-  // Analysis functions
-  const viewResult = (result: AnalysisResult) => {
-    setSelectedResult(result);
-    setResultsDialogOpen(true);
-  };
-
   const closeResultsDialog = () => {
     setResultsDialogOpen(false);
     setSelectedResult(null);
-  };
-
-  const rerunAnalysis = (historyItem: HistoryItem) => {
-    runAnalysis(
-      historyItem.analysis_type,
-      historyItem.analysis_name,
-      historyItem.parameters
-    );
   };
 
   // Handler for rerunning from results viewer - navigates to form with pre-filled parameters
@@ -162,6 +107,27 @@ export const AnalyticsDashboard: React.FC = () => {
     });
     
     setRerunScanData(null);
+    setTechnicalRerunData(null);
+
+    const toTechnicalState = (asset: 'stock' | 'etf', params: any): TechnicalAnalysisInitialState => {
+      const idFromArray = asset === 'stock'
+        ? (Array.isArray(params?.symbols) ? params.symbols[0] : undefined)
+        : (Array.isArray(params?.codes) ? params.codes[0] : undefined);
+      const identifier =
+        (params?.identifier as string | undefined) ||
+        idFromArray ||
+        (asset === 'stock' ? (params?.symbol as string | undefined) : (params?.code as string | undefined)) ||
+        (asset === 'stock' ? 'AAPL' : 'NNF');
+
+      return {
+        assetType: asset,
+        identifier,
+        start_date: params?.start_date || params?.startDate,
+        end_date: params?.end_date || params?.endDate,
+        interval: params?.interval,
+        indicators: params?.indicators || params?.scanner_configs || undefined,
+      };
+    };
 
     // Navigate to the appropriate tab based on analysis type
     switch (analysisType) {
@@ -174,10 +140,12 @@ export const AnalyticsDashboard: React.FC = () => {
         setActiveTab(1); // Unified Scan tab
         break;
       case 'stock_technical':
-        setActiveTab(2); // Stock Technical tab
+        setTechnicalRerunData(toTechnicalState('stock', parameters));
+        setActiveTab(0); // Unified Technical tab
         break;
       case 'etf_technical':
-        setActiveTab(0); // ETF Technical tab
+        setTechnicalRerunData(toTechnicalState('etf', parameters));
+        setActiveTab(0); // Unified Technical tab
         break;
       default:
         console.warn('Unknown analysis type:', analysisType);
@@ -192,7 +160,6 @@ export const AnalyticsDashboard: React.FC = () => {
 
   useEffect(() => {
     loadCapabilities();
-    loadHistory();
   }, []);
 
   const loadCapabilities = async () => {
@@ -204,18 +171,6 @@ export const AnalyticsDashboard: React.FC = () => {
       setError(err.message || 'Failed to load analytics capabilities');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const loadHistory = async () => {
-    try {
-      setHistoryLoading(true);
-      const response = await analyticsApi.getHistory({ limit: 20 });
-      setHistory(response.history || []);
-    } catch (err: any) {
-      console.error('Failed to load history:', err);
-    } finally {
-      setHistoryLoading(false);
     }
   };
 
@@ -243,18 +198,6 @@ export const AnalyticsDashboard: React.FC = () => {
       setRunningAnalysis(null);
     }
   };
-
-  const toggleFavorite = async (historyId: number, currentFavorite: boolean) => {
-    // For now, just update local state - in a real app, you'd call an API
-    setHistory(prev =>
-      prev.map(item =>
-        item.id === historyId
-          ? { ...item, is_favorite: !currentFavorite }
-          : item
-      )
-    );
-  };
-
 
   if (loading) {
     return (
@@ -291,21 +234,6 @@ export const AnalyticsDashboard: React.FC = () => {
             <Typography>
               Running {runningAnalysis.replace('_', ' ')} analysis...
             </Typography>
-            <Box flexGrow={1} />
-            <Typography variant="body2">
-              {analysisProgress[runningAnalysis] || 0}% complete
-            </Typography>
-          </Box>
-          <Box sx={{ width: '100%', mt: 1 }}>
-            <Box
-              sx={{
-                height: 4,
-                bgcolor: 'primary.light',
-                borderRadius: 2,
-                width: `${analysisProgress[runningAnalysis] || 0}%`,
-                transition: 'width 0.3s ease-in-out',
-              }}
-            />
           </Box>
         </Alert>
       )}
@@ -357,7 +285,7 @@ export const AnalyticsDashboard: React.FC = () => {
           <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>
-                <PlayIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
+                <ChartIcon sx={{ mr: 1, verticalAlign: 'middle' }} />
                 Quick Actions
               </Typography>
 
@@ -366,9 +294,9 @@ export const AnalyticsDashboard: React.FC = () => {
                   variant="outlined"
                   fullWidth
                   onClick={() => setActiveTab(0)}
-                  startIcon={<TrendingUpIcon />}
+                  startIcon={<ChartIcon />}
                 >
-                  ETF Technical Analysis
+                  Technical Analysis
                 </Button>
 
                 <Button
@@ -384,18 +312,18 @@ export const AnalyticsDashboard: React.FC = () => {
                   variant="outlined"
                   fullWidth
                   onClick={() => setActiveTab(2)}
-                  startIcon={<TimelineIcon />}
+                  startIcon={<HistoryIcon />}
                 >
-                  Stock Technical Analysis
+                  Jobs &amp; History
                 </Button>
 
                 <Button
                   variant="outlined"
                   fullWidth
                   onClick={() => setActiveTab(3)}
-                  startIcon={<HistoryIcon />}
+                  startIcon={<AnalyticsIcon />}
                 >
-                  Jobs &amp; History
+                  Results &amp; History
                 </Button>
               </Stack>
             </CardContent>
@@ -411,27 +339,13 @@ export const AnalyticsDashboard: React.FC = () => {
                 Recent Results
               </Typography>
 
-              {analysisResults.length > 0 ? (
-                <Box>
-                  {analysisResults.slice(0, 3).map((result, index) => (
-                    <Box key={index} sx={{ mb: 1 }}>
-                      <Typography variant="body2" noWrap>
-                        {result.analysis_name}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {new Date(result.timestamp).toLocaleString()}
-                      </Typography>
-                    </Box>
-                  ))}
-                  <Button size="small" onClick={() => setActiveTab(4)}>
-                    View All Results
-                  </Button>
-                </Box>
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  No recent results. Run an analysis to see results here.
-                </Typography>
-              )}
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                Launch scan or technical analyses to populate results. Completed runs are available in the
+                Results &amp; History tab.
+              </Typography>
+              <Button size="small" onClick={() => setActiveTab(3)}>
+                Open Results &amp; History
+              </Button>
             </CardContent>
           </Card>
         </Grid>
@@ -441,19 +355,17 @@ export const AnalyticsDashboard: React.FC = () => {
       <Paper sx={{ mt: 3 }}>
         <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
           <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
-            <Tab label="ETF Technical" />
+            <Tab label="Technical Analysis" />
             <Tab label="Scan Analysis" />
-            <Tab label="Stock Technical" />
             <Tab label="Jobs & History" />
             <Tab label="Results & History" />
           </Tabs>
         </Box>
 
         <TabPanel value={activeTab} index={0}>
-          <ETFTechnicalAnalysisPanel
-            capabilities={capabilities}
-            onRunAnalysis={runAnalysis}
-            running={runningAnalysis === 'etf_technical'}
+          <UnifiedTechnicalAnalysisPanel
+            initialState={technicalRerunData}
+            onInitialStateConsumed={() => setTechnicalRerunData(null)}
           />
         </TabPanel>
 
@@ -467,18 +379,10 @@ export const AnalyticsDashboard: React.FC = () => {
         </TabPanel>
 
         <TabPanel value={activeTab} index={2}>
-          <StockTechnicalAnalysisPanel
-            capabilities={capabilities}
-            onRunAnalysis={runAnalysis}
-            running={runningAnalysis === 'stock_technical'}
-          />
-        </TabPanel>
-
-        <TabPanel value={activeTab} index={3}>
           <AnalysisJobsPanel onRerunRequest={handleRerunWithParameters} />
         </TabPanel>
 
-        <TabPanel value={activeTab} index={4}>
+        <TabPanel value={activeTab} index={3}>
           <AnalysisResultsPanel onRerunRequest={handleRerunWithParameters} />
         </TabPanel>
       </Paper>
@@ -531,276 +435,3 @@ export const AnalyticsDashboard: React.FC = () => {
     </Box>
   );
 };
-
-// Placeholder components for each analysis type
-const ETFTechnicalAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysis, running }) => (
-  <ETFTechnicalAnalysisForm 
-    onRunAnalysis={(parameters) => onRunAnalysis('etf_technical', 'ETF Technical Analysis', parameters)} 
-    running={running} 
-  />
-);
-
-const StockTechnicalAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysis, running }) => (
-  <Box>
-    <Typography variant="h6" gutterBottom>
-      Stock Technical Analysis Configuration
-    </Typography>
-    <Alert severity="info" sx={{ mb: 2 }}>
-      Stock Technical Analysis panel implementation in progress.
-    </Alert>
-    <Button
-      variant="contained"
-      disabled={running}
-      startIcon={running ? <CircularProgress size={20} /> : <PlayIcon />}
-      onClick={() => onRunAnalysis('stock_technical', 'Stock Technical Analysis', {
-        symbols: ['AAPL'],
-        indicators: ['EMA', 'RSI']
-      })}
-    >
-      {running ? 'Running Analysis...' : 'Run Sample Analysis'}
-    </Button>
-  </Box>
-);
-
-const ResultsHistoryPanel: React.FC<any> = ({
-  results, history, loading, searchTerm, onSearchChange,
-  filterType, onFilterChange, onRerunAnalysis, onToggleFavorite, onViewResult,
-  setSortBy, setSortOrder, setActiveTab, sortBy, sortOrder
-}) => (
-  <Box>
-    <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-      <Typography variant="h6">
-        Analysis Results & History
-      </Typography>
-
-      <Box display="flex" gap={2}>
-        <TextField
-          size="small"
-          placeholder="Search analyses..."
-          value={searchTerm}
-          onChange={(e) => onSearchChange(e.target.value)}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon />
-              </InputAdornment>
-            ),
-          }}
-        />
-
-        <FormControl size="small" sx={{ minWidth: 120 }}>
-          <InputLabel>Filter</InputLabel>
-          <Select
-            value={filterType}
-            label="Filter"
-            onChange={(e: SelectChangeEvent) => onFilterChange(e.target.value)}
-          >
-            <MenuItem value="all">All Types</MenuItem>
-            <MenuItem value="etf_technical">ETF Technical</MenuItem>
-            <MenuItem value="etf_scan">ETF Scan</MenuItem>
-            <MenuItem value="stock_technical">Stock Technical</MenuItem>
-          </Select>
-        </FormControl>
-      </Box>
-    </Box>
-
-    {loading ? (
-      <CircularProgress />
-    ) : (
-      <Grid container spacing={2}>
-        {/* Recent Results */}
-        <Grid item xs={12} md={6}>
-          <Typography variant="h6" gutterBottom>
-            Recent Results ({results.length})
-          </Typography>
-          {results.length > 0 ? (
-            <List>
-              {results.slice(0, 5).map((result: AnalysisResult, index: number) => (
-                <ListItem
-                  key={index}
-                  divider
-                  button
-                  onClick={() => onViewResult(result)}
-                >
-                  <ListItemIcon>
-                    <ChartIcon color="primary" />
-                  </ListItemIcon>
-                  <ListItemText
-                    primary={result.analysis_name}
-                    secondary={
-                      <Box>
-                        <Typography variant="body2">
-                          {result.result_count} results • {result.execution_time_ms}ms
-                        </Typography>
-                        <Typography variant="caption">
-                          {new Date(result.timestamp).toLocaleString()}
-                        </Typography>
-                      </Box>
-                    }
-                  />
-                  <Tooltip title="View Details">
-                    <IconButton size="small">
-                      <ChartIcon />
-                    </IconButton>
-                  </Tooltip>
-                </ListItem>
-              ))}
-              {results.length > 5 && (
-                <ListItem>
-                  <Button fullWidth onClick={() => setActiveTab(3)}>
-                    View All Results ({results.length})
-                  </Button>
-                </ListItem>
-              )}
-            </List>
-          ) : (
-            <Typography color="text.secondary">No recent results</Typography>
-          )}
-        </Grid>
-
-        {/* History */}
-        <Grid item xs={12} md={6}>
-          <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-            <Typography variant="h6">
-              Analysis History ({history.length})
-            </Typography>
-
-            <Box display="flex" gap={1}>
-              <FormControl size="small" sx={{ minWidth: 100 }}>
-                <InputLabel>Sort By</InputLabel>
-                <Select
-                  value={sortBy}
-                  label="Sort By"
-                  onChange={(e: SelectChangeEvent) => setSortBy(e.target.value)}
-                >
-                  <MenuItem value="date">Date</MenuItem>
-                  <MenuItem value="name">Name</MenuItem>
-                  <MenuItem value="type">Type</MenuItem>
-                  <MenuItem value="execution_time">Execution Time</MenuItem>
-                </Select>
-              </FormControl>
-
-              <Button
-                size="small"
-                onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-              >
-                {sortOrder === 'asc' ? '↑' : '↓'}
-              </Button>
-            </Box>
-          </Box>
-
-          {(() => {
-            // Filter and sort history
-            const filtered = history.filter((item: HistoryItem) => {
-              const matchesSearch = item.analysis_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                                   item.analysis_type.toLowerCase().includes(searchTerm.toLowerCase());
-              const matchesFilter = filterType === 'all' || item.analysis_type === filterType;
-              return matchesSearch && matchesFilter;
-            });
-
-            // Sort results
-            const sorted = [...filtered].sort((a, b) => {
-              let aValue: any, bValue: any;
-
-              switch (sortBy) {
-                case 'date':
-                  aValue = new Date(a.executed_at);
-                  bValue = new Date(b.executed_at);
-                  break;
-                case 'name':
-                  aValue = a.analysis_name.toLowerCase();
-                  bValue = b.analysis_name.toLowerCase();
-                  break;
-                case 'type':
-                  aValue = a.analysis_type.toLowerCase();
-                  bValue = b.analysis_type.toLowerCase();
-                  break;
-                case 'execution_time':
-                  aValue = a.execution_time_ms;
-                  bValue = b.execution_time_ms;
-                  break;
-                default:
-                  aValue = a.executed_at;
-                  bValue = b.executed_at;
-              }
-
-              if (sortOrder === 'asc') {
-                return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
-              } else {
-                return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
-              }
-            });
-
-            return sorted.length > 0 ? (
-              <List sx={{ maxHeight: 400, overflow: 'auto' }}>
-                {sorted.slice(0, 10).map((item: HistoryItem) => (
-                <ListItem key={item.id} divider>
-                  <ListItemIcon>
-                    <IconButton
-                      size="small"
-                      onClick={() => onToggleFavorite(item.id, item.is_favorite)}
-                    >
-                      {item.is_favorite ? <FavoriteIcon color="error" /> : <FavoriteBorderIcon />}
-                    </IconButton>
-                  </ListItemIcon>
-                  <ListItemText
-                    primary={
-                      <Box display="flex" alignItems="center" gap={1}>
-                        <Typography variant="body1">
-                          {item.analysis_name}
-                        </Typography>
-                        {item.is_favorite && (
-                          <Chip label="Favorite" size="small" color="primary" />
-                        )}
-                      </Box>
-                    }
-                    secondary={
-                      <Box>
-                        <Typography variant="body2">
-                          {item.access_count} runs • {item.execution_time_ms}ms avg
-                        </Typography>
-                        <Typography variant="caption">
-                          {new Date(item.executed_at).toLocaleString()}
-                        </Typography>
-                      </Box>
-                    }
-                  />
-                  <Box display="flex" gap={1}>
-                    <Tooltip title="Re-run Analysis">
-                      <IconButton size="small" onClick={() => onRerunAnalysis(item)}>
-                        <RefreshIcon />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="View Details">
-                      <IconButton size="small" onClick={() => onViewResult({
-                        analysis_type: item.analysis_type,
-                        analysis_name: item.analysis_name,
-                        parameters: item.parameters,
-                        results: null,
-                        result_count: 0,
-                        execution_time_ms: item.execution_time_ms,
-                        timestamp: item.executed_at,
-                      })}>
-                        <ChartIcon />
-                      </IconButton>
-                    </Tooltip>
-                  </Box>
-                </ListItem>
-              ))}
-                {sorted.length > 10 && (
-                  <ListItem>
-                    <Button fullWidth onClick={() => setActiveTab(3)}>
-                      View All History ({sorted.length})
-                    </Button>
-                  </ListItem>
-                )}
-              </List>
-            ) : (
-              <Typography color="text.secondary">No analysis history</Typography>
-            );
-          })()}
-        </Grid>
-      </Grid>
-    )}
-  </Box>
-);

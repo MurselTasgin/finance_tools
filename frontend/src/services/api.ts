@@ -341,6 +341,17 @@ export const analyticsApi = {
     });
     return response.data;
   },
+  getTechnicalChart: async (options: {
+    asset_type: 'stock' | 'etf';
+    identifier: string;
+    start_date?: string;
+    end_date?: string;
+    interval?: string;
+    indicators?: Record<string, any>;
+  }): Promise<any> => {
+    const response = await api.post('/api/analytics/technical/chart', options);
+    return response.data;
+  },
   // Task Management - Start Analysis in Background
   startAnalysis: async (analysis_type: string, analysis_name: string, parameters: any): Promise<{ task_id: string; message: string }> => {
     const response = await api.post('/api/analytics/run', {
