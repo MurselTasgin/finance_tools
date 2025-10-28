@@ -68,7 +68,11 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { analyticsApi } from '../services/api';
 
-export const AnalysisJobsPanel: React.FC = () => {
+interface AnalysisJobsPanelProps {
+  onRerunRequest?: (analysisType: string, parameters: any) => void;
+}
+
+export const AnalysisJobsPanel: React.FC<AnalysisJobsPanelProps> = ({ onRerunRequest }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -156,9 +160,27 @@ export const AnalysisJobsPanel: React.FC = () => {
 
   // Rerun mutation
   const rerunMutation = useMutation(
-    () => {
+    async () => {
       if (!selectedJobForRerun) return Promise.reject('No job selected');
-      return analyticsApi.startAnalysis(
+      
+      // If onRerunRequest is provided, use it to navigate to form with parameters
+      if (onRerunRequest && selectedJobForRerun.analysis_type === 'stock_scan') {
+        console.log('Rerun mutation - passing parameters:', {
+          analysisType: selectedJobForRerun.analysis_type,
+          parameters: selectedJobForRerun.parameters,
+          hasScannerConfigs: !!selectedJobForRerun.parameters?.scanner_configs,
+          hasWeights: !!selectedJobForRerun.parameters?.weights
+        });
+        
+        onRerunRequest(selectedJobForRerun.analysis_type, selectedJobForRerun.parameters || {});
+        setRerunDialogOpen(false);
+        setSelectedJobForRerun(null);
+        // Return a consistent response structure
+        return { task_id: '', message: 'Navigating to form...' };
+      }
+      
+      // Otherwise, use the API to rerun directly
+      return await analyticsApi.startAnalysis(
         selectedJobForRerun.analysis_type,
         selectedJobForRerun.analysis_name,
         selectedJobForRerun.parameters || {}
@@ -166,6 +188,10 @@ export const AnalysisJobsPanel: React.FC = () => {
     },
     {
       onSuccess: () => {
+        if (!selectedJobForRerun || selectedJobForRerun.analysis_type === 'stock_scan') {
+          // For stock_scan, navigation is handled above
+          return;
+        }
         queryClient.invalidateQueries('analysisActiveTasks');
         queryClient.invalidateQueries('analysisHistory');
         setRerunDialogOpen(false);
@@ -232,8 +258,28 @@ export const AnalysisJobsPanel: React.FC = () => {
     }
   };
 
-  const handleRerun = (job: any) => {
-    setSelectedJobForRerun(job);
+  const handleRerun = async (job: any) => {
+    // Fetch complete task details to ensure we have all parameters
+    let enhancedJob = job;
+    try {
+      const detailsResponse = await analyticsApi.getAnalysisTaskDetails(job.task_id);
+      if (detailsResponse?.task_info?.parameters) {
+        enhancedJob = {
+          ...job,
+          parameters: {
+            ...job.parameters,
+            ...detailsResponse.task_info.parameters,
+            // Ensure scanner_configs and weights are included
+            scanner_configs: detailsResponse.task_info.parameters.scanner_configs || job.parameters?.scanner_configs,
+            weights: detailsResponse.task_info.parameters.weights || job.parameters?.weights,
+          }
+        };
+      }
+    } catch (error) {
+      console.warn('Could not fetch task details for rerun, using job parameters:', error);
+    }
+    
+    setSelectedJobForRerun(enhancedJob);
     setRerunDialogOpen(true);
   };
 
@@ -244,19 +290,26 @@ export const AnalysisJobsPanel: React.FC = () => {
         const response = await fetch(`/api/analytics/results/${job.result_id}`);
         if (response.ok) {
           const resultData = await response.json();
+          
+          // Fetch task details to get complete parameter information
+          let enhancedParameters = job.parameters || resultData.parameters || {};
+          try {
+            const detailsResponse = await analyticsApi.getAnalysisTaskDetails(job.task_id);
+            if (detailsResponse?.task_info?.parameters) {
+              enhancedParameters = detailsResponse.task_info.parameters;
+            }
+          } catch (error) {
+            console.warn('Could not fetch task details:', error);
+          }
+          
+          // Use the API response but enrich with complete parameters
           setSelectedJobResults({
-            analysis_type: job.analysis_type,
-            analysis_name: job.analysis_name,
-            parameters: job.parameters || {},
-            results: resultData.results || [],
-            result_count: resultData.result_count || 0,
-            execution_time_ms: job.execution_time_ms || 0,
-            timestamp: job.start_time || job.created_at,
-            metadata: resultData.metadata || {}
+            ...resultData,
+            parameters: enhancedParameters
           });
         } else {
           console.error('Failed to fetch results:', response.statusText);
-          // Fallback to basic job info
+          // Fallback to job info
           setSelectedJobResults({
             analysis_type: job.analysis_type,
             analysis_name: job.analysis_name,
@@ -276,7 +329,7 @@ export const AnalysisJobsPanel: React.FC = () => {
           parameters: job.parameters || {},
           results: job.results_data?.results || [],
           result_count: job.results_data?.result_count || 0,
-          execution_time_ms: job.results_data?.execution_time_ms || 0,
+          execution_time_ms: job.execution_time_ms || 0,
           timestamp: job.start_time || job.created_at,
           metadata: job.results_data?.metadata || {}
         });
@@ -937,11 +990,38 @@ export const AnalysisJobsPanel: React.FC = () => {
         </DialogTitle>
         <DialogContent sx={{ p: 0 }}>
           {selectedJobResults && (
-            <AnalysisResultsViewer 
+            <AnalysisResultsViewer
               result={selectedJobResults}
               onExport={(format) => {
                 // TODO: Implement export functionality
                 console.log('Export requested:', format);
+              }}
+              onRerun={async (parameters) => {
+                try {
+                  // If onRerunRequest is provided for stock_scan, use it to navigate to form
+                  if (onRerunRequest && selectedJobResults.analysis_type === 'stock_scan') {
+                    onRerunRequest(selectedJobResults.analysis_type, parameters);
+                    setResultsDialogOpen(false);
+                    return;
+                  }
+                  
+                  // Otherwise, start analysis via API
+                  await analyticsApi.startAnalysis(
+                    selectedJobResults.analysis_type,
+                    selectedJobResults.analysis_name,
+                    parameters
+                  );
+                  // Refresh the jobs list
+                  queryClient.invalidateQueries('analysisActiveTasks');
+                  queryClient.invalidateQueries('analysisHistory');
+                  // Close the results dialog
+                  setResultsDialogOpen(false);
+                  // Show success message (optional - you could add a snackbar here)
+                  console.log('Analysis rerun started successfully');
+                } catch (error) {
+                  console.error('Failed to start rerun:', error);
+                  // TODO: Show error message to user
+                }
               }}
             />
           )}

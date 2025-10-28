@@ -29,19 +29,30 @@ class StockScanCriteria:
     atr_window: int = 14
     # ADX parameters
     adx_window: int = 14
-    # Weights for weighted scanning
-    w_ema_cross: float = 1.0
-    w_macd: float = 1.0
-    w_rsi: float = 1.0
-    w_momentum: float = 1.0
-    w_momentum_daily: float = 1.0
-    w_supertrend: float = 1.0
-    w_volume: float = 1.0
-    w_stochastic: float = 1.0
-    w_atr: float = 1.0
-    w_adx: float = 1.0
+    # EMA regime parameters
+    ema_fast: int = 20
+    ema_slow: int = 50
+    ema_regime: int = 200
+    max_ext_atr: float = 1.5
+    min_vol_mult: float = 1.2
+    vol_sma_period: int = 20
+    # Weights for weighted scanning - dynamically settable
     score_buy_threshold: float = 1.0
     score_sell_threshold: float = 1.0
+    
+    def __post_init__(self):
+        """Allow dynamic weight attributes to be set"""
+        pass
+    
+    def get_weight(self, indicator_id: str) -> float:
+        """Get weight for an indicator dynamically"""
+        weight_attr = f"w_{indicator_id}"
+        return getattr(self, weight_attr, 0.0)
+    
+    def set_weight(self, indicator_id: str, weight: float):
+        """Set weight for an indicator dynamically"""
+        weight_attr = f"w_{indicator_id}"
+        setattr(self, weight_attr, weight)
 
 
 @dataclass
@@ -59,4 +70,5 @@ class StockScanResult:
     score: float = 0.0
     indicators_snapshot: Dict[str, float] = field(default_factory=dict)
     components: Dict[str, float] = field(default_factory=dict)
+    indicator_details: Dict = field(default_factory=dict)  # Per-indicator grouped details
 

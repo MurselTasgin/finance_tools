@@ -36,6 +36,10 @@ import {
   InputAdornment,
   TableSortLabel,
   TablePagination,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   TableChart as TableIcon,
@@ -69,6 +73,7 @@ interface AnalysisResult {
 interface AnalysisResultsViewerProps {
   result: AnalysisResult;
   onExport?: (format: string) => void;
+  onRerun?: (parameters: any) => void;
 }
 
 interface TabPanelProps {
@@ -86,18 +91,22 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
-export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ result, onExport }) => {
+export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ result, onExport, onRerun }) => {
   const [activeTab, setActiveTab] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState<string>('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(50);
-  
+
   // Additional filters
   const [scoreFilter, setScoreFilter] = useState<string>('all'); // 'all', 'positive', 'negative', 'zero'
   const [recommendationFilter, setRecommendationFilter] = useState<string>('all'); // 'all', 'BUY', 'SELL', 'HOLD'
   const [symbolFilter, setSymbolFilter] = useState<string>('');
+
+  // Rerun dialog
+  const [rerunDialogOpen, setRerunDialogOpen] = useState(false);
+  const [editedParameters, setEditedParameters] = useState<any>(null);
 
 
   // Process results based on analysis type
@@ -505,9 +514,7 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
                     Last Value
                   </TableSortLabel>
                 </TableCell>
-                <TableCell>Technical Indicators</TableCell>
-                <TableCell>Score Contributions</TableCell>
-                <TableCell>Reasons</TableCell>
+                <TableCell>Indicator Analysis</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -545,84 +552,111 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
                     </Typography>
                   </TableCell>
                   <TableCell>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                      {item.indicators_snapshot && Object.entries(item.indicators_snapshot).map(([key, value]) => (
-                        <Box key={key} sx={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-                          <Typography variant="caption" color="textSecondary">
-                            {key.replace('price_', '').replace('_', ' ').toUpperCase()}:
-                          </Typography>
-                          <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
-                            {typeof value === 'number' && !isNaN(value) ? value.toFixed(2) : 'N/A'}
-                          </Typography>
-                        </Box>
-                      ))}
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                      {item.components ? (
-                        Object.entries(item.components).map(([key, value]) => {
-                          // Handle both old format (number) and new format (object with raw, weight, contribution)
-                          const isObject = typeof value === 'object' && value !== null;
-                          const contribution = isObject ? (value as any).contribution : value;
-                          const raw = isObject ? (value as any).raw : 0;
-                          const weight = isObject ? (value as any).weight : 0;
-                          
-                          return (
-                            <Box key={key} sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, fontSize: '0.7rem', mb: 0.5 }}>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <Box sx={{ maxWidth: 500, maxHeight: 250, overflow: 'auto' }}>
+                      {item.indicator_details ? (
+                        // New grouped structure: show each indicator with its values, contribution, and reasons
+                        Object.entries(item.indicator_details).map(([indicatorId, indData]: [string, any]) => (
+                          <Box key={indicatorId} sx={{ mb: 2, p: 1, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 'bold', mb: 0.5, color: 'primary.main' }}>
+                              {indData.name || indicatorId}
+                            </Typography>
+                            
+                            {/* Technical Indicator Values */}
+                            {indData.values && Object.keys(indData.values).length > 0 && (
+                              <Box sx={{ mb: 1 }}>
                                 <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 'bold' }}>
-                                  {key.replace('_', ' ').toUpperCase()}:
+                                  Values:
                                 </Typography>
-                                <Typography 
-                                  variant="caption" 
-                                  sx={{ 
-                                    fontWeight: 'bold',
-                                    color: (typeof contribution === 'number' && contribution > 0) ? 'success.main' : (typeof contribution === 'number' && contribution < 0) ? 'error.main' : 'text.secondary'
-                                  }}
-                                >
-                                  {typeof contribution === 'number' ? contribution.toFixed(3) : 'N/A'}
-                                </Typography>
+                                {Object.entries(indData.values).map(([key, value]: [string, any]) => (
+                                  <Box key={key} sx={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', pl: 1 }}>
+                                    <Typography variant="caption" color="textSecondary">
+                                      {key.replace('_', ' ')}:
+                                    </Typography>
+                                    <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
+                                      {typeof value === 'number' && !isNaN(value) ? value.toFixed(2) : 'N/A'}
+                                    </Typography>
+                                  </Box>
+                                ))}
                               </Box>
-                              {isObject && weight > 0 && (
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.65rem', pl: 1 }}>
-                                  <Typography variant="caption" color="textSecondary">
-                                    Raw: {raw.toFixed(3)} × {weight} =
-                                  </Typography>
+                            )}
+
+                            {/* Score Calculation Details */}
+                            {indData.calculation_details && indData.calculation_details.length > 0 && (
+                              <Box sx={{ mb: 1, p: 1, bgcolor: 'action.hover', borderRadius: 1 }}>
+                                <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 'bold', display: 'block', mb: 0.5 }}>
+                                  Score Calculation Details:
+                                </Typography>
+                                <Box sx={{ pl: 1, fontFamily: 'monospace' }}>
+                                  {indData.calculation_details.map((detail: string, detailIndex: number) => (
+                                    <Typography
+                                      key={detailIndex}
+                                      variant="caption"
+                                      display="block"
+                                      sx={{
+                                        fontSize: '0.7rem',
+                                        lineHeight: 1.4,
+                                        whiteSpace: 'pre',
+                                        color: detail.includes('Step') ? 'primary.main' : 'text.secondary',
+                                        fontWeight: detail.includes('Step') ? 'bold' : 'normal'
+                                      }}
+                                    >
+                                      {detail}
+                                    </Typography>
+                                  ))}
                                 </Box>
-                              )}
-                            </Box>
-                          );
-                        })
-                      ) : (
-                        <Typography variant="caption" color="textSecondary">
-                          No components data
-                        </Typography>
-                      )}
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ maxWidth: 300, maxHeight: 150, overflow: 'auto' }}>
-                      {item.reasons ? (
-                        item.reasons.map((reason: string, reasonIndex: number) => (
-                          <Typography 
-                            key={reasonIndex} 
-                            variant="caption" 
-                            display="block" 
-                            sx={{ 
-                              mb: 0.5,
-                              fontFamily: reason.startsWith('  •') ? 'monospace' : 'inherit',
-                              fontSize: reason.startsWith('  •') ? '0.7rem' : '0.75rem',
-                              color: reason.startsWith('  •') ? 'text.secondary' : 'text.primary'
-                            }}
-                          >
-                            {reason}
-                          </Typography>
+                              </Box>
+                            )}
+
+                            {/* Score Contribution */}
+                            {(indData.contribution !== undefined || indData.weight > 0) && (
+                              <Box sx={{ mb: 1 }}>
+                                <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 'bold' }}>
+                                  Contribution: {typeof indData.contribution === 'number' ? indData.contribution.toFixed(3) : 'N/A'}
+                                </Typography>
+                                {indData.raw !== undefined && indData.weight > 0 && (
+                                  <Typography variant="caption" color="textSecondary" sx={{ fontSize: '0.65rem', pl: 1, display: 'block' }}>
+                                    (Raw: {indData.raw.toFixed(3)} × Weight: {indData.weight} = {indData.contribution.toFixed(3)})
+                                  </Typography>
+                                )}
+                              </Box>
+                            )}
+                            
+                            {/* Reasons/Explanations */}
+                            {indData.reasons && indData.reasons.length > 0 && (
+                              <Box>
+                                <Typography variant="caption" color="textSecondary" sx={{ fontWeight: 'bold' }}>
+                                  Analysis:
+                                </Typography>
+                                <Box sx={{ pl: 1 }}>
+                                  {indData.reasons.map((reason: string, reasonIndex: number) => (
+                                    reason && (
+                                      <Typography 
+                                        key={reasonIndex} 
+                                        variant="caption" 
+                                        display="block" 
+                                        sx={{ 
+                                          mb: 0.25,
+                                          fontSize: '0.7rem',
+                                          fontFamily: reason.startsWith('  •') ? 'monospace' : 'inherit',
+                                          color: reason.includes('BUY') ? 'success.main' : reason.includes('SELL') ? 'error.main' : 'text.secondary'
+                                        }}
+                                      >
+                                        {reason}
+                                      </Typography>
+                                    )
+                                  ))}
+                                </Box>
+                              </Box>
+                            )}
+                          </Box>
                         ))
                       ) : (
-                        <Typography variant="caption" color="textSecondary">
-                          No reasons data
-                        </Typography>
+                        // Fallback to old structure for backward compatibility
+                        <Box>
+                          <Typography variant="caption" color="textSecondary">
+                            {item.indicators_snapshot || item.components ? 'Using legacy format' : 'No indicator data'}
+                          </Typography>
+                        </Box>
                       )}
                     </Box>
                   </TableCell>
@@ -924,6 +958,163 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
     );
   };
 
+  const renderStockScanConfiguration = () => {
+    if (result.analysis_type !== 'stock_scan' || !result.parameters) {
+      return null;
+    }
+
+    const {
+      symbols,
+      scanners,
+      scanner_configs,
+      weights,
+      buy_threshold,
+      sell_threshold,
+      start_date,
+      end_date,
+      column,
+      sector,
+      industry
+    } = result.parameters;
+
+    const buy_count = (result as any).buy_count || 0;
+    const sell_count = (result as any).sell_count || 0;
+    const hold_count = (result as any).hold_count || 0;
+
+    return (
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span>Analysis Configuration</span>
+            {onRerun && (
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => {
+                  setEditedParameters(result.parameters);
+                  setRerunDialogOpen(true);
+                }}
+                startIcon={<SearchIcon />}
+              >
+                Rerun with Same Setup
+              </Button>
+            )}
+          </Typography>
+
+          <Grid container spacing={3}>
+            {/* Stocks Analyzed */}
+            <Grid item xs={12} md={6}>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                Stocks Analyzed
+              </Typography>
+              {symbols && symbols.length > 0 ? (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  {symbols.map((symbol: string, idx: number) => (
+                    <Chip key={idx} label={symbol} size="small" color="primary" variant="outlined" />
+                  ))}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">All available stocks</Typography>
+              )}
+            </Grid>
+
+            {/* Date Range & Column */}
+            <Grid item xs={12} md={6}>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                Analysis Period & Settings
+              </Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                <Chip label={`Start: ${start_date || 'N/A'}`} size="small" variant="outlined" />
+                <Chip label={`End: ${end_date || 'N/A'}`} size="small" variant="outlined" />
+                <Chip label={`Column: ${column || 'close'}`} size="small" variant="outlined" />
+                {sector && <Chip label={`Sector: ${sector}`} size="small" variant="outlined" />}
+                {industry && <Chip label={`Industry: ${industry}`} size="small" variant="outlined" />}
+              </Box>
+            </Grid>
+
+            {/* Thresholds */}
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                Recommendation Thresholds
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                <Chip
+                  label={`BUY: Score ≥ ${buy_threshold !== undefined ? buy_threshold : 1.0}`}
+                  size="small"
+                  color="success"
+                />
+                <Chip
+                  label={`SELL: Score ≤ -${sell_threshold !== undefined ? sell_threshold : 1.0}`}
+                  size="small"
+                  color="error"
+                />
+                <Chip
+                  label={`HOLD: Score between -${sell_threshold !== undefined ? sell_threshold : 1.0} and ${buy_threshold !== undefined ? buy_threshold : 1.0}`}
+                  size="small"
+                  color="default"
+                />
+              </Box>
+            </Grid>
+
+            {/* Selected Indicators */}
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                Selected Indicators ({scanners?.length || 0})
+              </Typography>
+              {scanners && scanners.length > 0 ? (
+                <Grid container spacing={2}>
+                  {scanners.map((indicatorId: string) => {
+                    const config = scanner_configs?.[indicatorId] || {};
+                    const weight = weights?.[indicatorId] || 0;
+
+                    return (
+                      <Grid item xs={12} sm={6} md={4} key={indicatorId}>
+                        <Paper sx={{ p: 1.5, bgcolor: 'background.default' }}>
+                          <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                            {indicatorId.replace(/_/g, ' ').toUpperCase()}
+                          </Typography>
+                          <Chip label={`Weight: ${weight}`} size="small" color="primary" sx={{ mb: 0.5 }} />
+                          {Object.keys(config).length > 0 && (
+                            <Box sx={{ mt: 1 }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                                Parameters:
+                              </Typography>
+                              {Object.entries(config).map(([param, value]) => (
+                                <Typography key={param} variant="caption" display="block" sx={{ pl: 1 }}>
+                                  • {param}: {Array.isArray(value) ? `[${value.join(', ')}]` : String(value)}
+                                </Typography>
+                              ))}
+                            </Box>
+                          )}
+                        </Paper>
+                      </Grid>
+                    );
+                  })}
+                </Grid>
+              ) : (
+                <Typography variant="body2" color="text.secondary">No indicators selected</Typography>
+              )}
+            </Grid>
+
+            {/* Results Summary */}
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
+                Results Summary
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                <Chip label={`Total Results: ${result.result_count || 0}`} size="small" color="info" />
+                <Chip label={`BUY: ${buy_count}`} size="small" color="success" />
+                <Chip label={`SELL: ${sell_count}`} size="small" color="error" />
+                <Chip label={`HOLD: ${hold_count}`} size="small" color="default" />
+                <Chip label={`Execution: ${result.execution_time_ms || 0}ms`} size="small" variant="outlined" />
+              </Box>
+            </Grid>
+          </Grid>
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <Box>
       <Typography variant="h5" gutterBottom>
@@ -934,6 +1125,8 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
       {renderSummary()}
 
       {renderScannerConfiguration()}
+
+      {renderStockScanConfiguration()}
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
@@ -972,6 +1165,61 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
           Export JSON
         </Button>
       </Box>
+
+      {/* Rerun Dialog */}
+      <Dialog
+        open={rerunDialogOpen}
+        onClose={() => setRerunDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          Preview & Edit Rerun Parameters
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ pt: 2 }}>
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Review and edit the analysis parameters below. Click "Confirm Rerun" to start a new analysis with these settings.
+            </Alert>
+
+            {editedParameters && (
+              <Paper sx={{ p: 2, bgcolor: 'background.default' }}>
+                <pre style={{
+                  margin: 0,
+                  fontSize: '12px',
+                  overflow: 'auto',
+                  maxHeight: '400px',
+                  fontFamily: 'monospace'
+                }}>
+                  {JSON.stringify(editedParameters, null, 2)}
+                </pre>
+              </Paper>
+            )}
+
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 2, display: 'block' }}>
+              Note: Advanced parameter editing will be available in a future update. For now, you can review the parameters that will be used for the rerun.
+            </Typography>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRerunDialogOpen(false)} color="inherit">
+            Cancel
+          </Button>
+          <Button
+            onClick={() => {
+              if (onRerun && editedParameters) {
+                onRerun(editedParameters);
+                setRerunDialogOpen(false);
+              }
+            }}
+            variant="contained"
+            color="primary"
+            startIcon={<SearchIcon />}
+          >
+            Confirm Rerun
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

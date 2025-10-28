@@ -25,14 +25,14 @@ import {
   IconButton,
   Chip,
   Dialog,
-  Tooltip,
   DialogTitle,
   DialogContent,
   DialogActions,
-  Slider,
   ListItemText,
   ListItem,
   List,
+  Slider,
+  Tooltip,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -55,6 +55,15 @@ interface SelectedScanner {
   config?: Record<string, any>;
 }
 
+interface Indicator {
+  id: string;
+  name: string;
+  description: string;
+  required_columns: string[];
+  parameter_schema: Record<string, any>;
+  capabilities: string[];
+}
+
 interface StockGroup {
   id: number;
   name: string;
@@ -65,74 +74,15 @@ interface StockGroup {
 interface StockScanAnalysisFormProps {
   onRunAnalysis: (parameters: any) => void;
   running: boolean;
+  initialParameters?: any;
+  onParametersUsed?: () => void;
 }
-
-const AVAILABLE_SCANNERS = [
-  {
-    id: 'ema_cross',
-    name: 'EMA Crossover',
-    description: 'Exponential Moving Average crossover signals',
-    defaultConfig: { short: 20, long: 50 }
-  },
-  {
-    id: 'macd',
-    name: 'MACD',
-    description: 'Moving Average Convergence Divergence',
-    defaultConfig: { slow: 26, fast: 12, signal: 9 }
-  },
-  {
-    id: 'rsi',
-    name: 'RSI',
-    description: 'Relative Strength Index',
-    defaultConfig: { window: 14, lower: 30, upper: 70 }
-  },
-  {
-    id: 'momentum',
-    name: 'Momentum',
-    description: 'Price momentum indicator',
-    defaultConfig: { windows: [30, 60, 90, 180, 360] }
-  },
-  {
-    id: 'daily_momentum',
-    name: 'Daily Momentum',
-    description: 'Daily price momentum indicator',
-    defaultConfig: { windows: [30, 60, 90, 180, 360] }
-  },
-  {
-    id: 'supertrend',
-    name: 'Supertrend',
-    description: 'Supertrend technical indicator',
-    defaultConfig: { hl_factor: 0.05, atr_period: 10, multiplier: 3.0 }
-  },
-  {
-    id: 'volume',
-    name: 'Volume Analysis',
-    description: 'On-Balance Volume and Volume SMA',
-    defaultConfig: { window: 20 }
-  },
-  {
-    id: 'stochastic',
-    name: 'Stochastic',
-    description: 'Stochastic Oscillator',
-    defaultConfig: { k_period: 14, d_period: 3 }
-  },
-  {
-    id: 'atr',
-    name: 'ATR',
-    description: 'Average True Range (Volatility)',
-    defaultConfig: { window: 14 }
-  },
-  {
-    id: 'adx',
-    name: 'ADX',
-    description: 'Average Directional Index (Trend Strength)',
-    defaultConfig: { window: 14 }
-  },
-];
 
 export const StockScanAnalysisForm: React.FC<StockScanAnalysisFormProps> = ({
   onRunAnalysis,
   running,
+  initialParameters,
+  onParametersUsed,
 }) => {
   // Basic parameters
   const [specificSymbols, setSpecificSymbols] = useState<string[]>([]);
@@ -148,9 +98,11 @@ export const StockScanAnalysisForm: React.FC<StockScanAnalysisFormProps> = ({
   // Scanner management
   const [selectedScanners, setSelectedScanners] = useState<SelectedScanner[]>([]);
   const [showAddScanner, setShowAddScanner] = useState(false);
+  const [availableIndicators, setAvailableIndicators] = useState<Indicator[]>([]);
 
-  // Threshold
-  const [scoreThreshold] = useState(0.0);
+  // Thresholds for BUY/SELL recommendations
+  const [buyThreshold, setBuyThreshold] = useState(1.0);
+  const [sellThreshold, setSellThreshold] = useState(1.0);
 
   // Stock management
   const [newSymbol, setNewSymbol] = useState('');
@@ -166,10 +118,84 @@ export const StockScanAnalysisForm: React.FC<StockScanAnalysisFormProps> = ({
     { value: 'low', label: 'Low Price' },
   ];
 
-  // Load stock groups on mount
+  // Load indicators and stock groups on mount
   useEffect(() => {
+    loadIndicators();
     loadStockGroups();
   }, []);
+
+  // Populate form when initialParameters is provided (e.g., from rerun)
+  useEffect(() => {
+    if (initialParameters && onParametersUsed) {
+      // Only populate if indicators are loaded (needed for scanner reconstruction)
+      const needsIndicators = initialParameters.scanner_configs && Object.keys(initialParameters.scanner_configs).length > 0;
+      
+      if (needsIndicators && availableIndicators.length === 0) {
+        // Wait for indicators to load
+        return;
+      }
+      
+      // Populate form fields from initial parameters
+      if (initialParameters.symbols) {
+        setSpecificSymbols(initialParameters.symbols);
+      }
+      if (initialParameters.start_date) {
+        setStartDate(initialParameters.start_date);
+      }
+      if (initialParameters.end_date) {
+        setEndDate(initialParameters.end_date);
+      }
+      if (initialParameters.column) {
+        setColumn(initialParameters.column);
+      }
+      if (initialParameters.sector) {
+        setSector(initialParameters.sector);
+      }
+      if (initialParameters.industry) {
+        setIndustry(initialParameters.industry);
+      }
+      if (initialParameters.buy_threshold !== undefined) {
+        setBuyThreshold(initialParameters.buy_threshold);
+      }
+      if (initialParameters.sell_threshold !== undefined) {
+        setSellThreshold(initialParameters.sell_threshold);
+      }
+
+      // Reconstruct selected scanners from scanner_configs and weights
+      if (initialParameters.scanner_configs && initialParameters.weights) {
+        const reconstructedScanners: SelectedScanner[] = [];
+        
+        Object.entries(initialParameters.scanner_configs).forEach(([scannerId, config]: [string, any]) => {
+          const indicator = availableIndicators.find(i => i.id === scannerId);
+          if (indicator) {
+            reconstructedScanners.push({
+              id: scannerId,
+              name: indicator.name,
+              weight: initialParameters.weights[scannerId] || 1.0,
+              config: config,
+            });
+          } else {
+            console.warn(`Could not find indicator with id: ${scannerId}`);
+          }
+        });
+        
+        console.log('Reconstructed scanners:', reconstructedScanners);
+        setSelectedScanners(reconstructedScanners);
+      }
+
+      // Call onParametersUsed to clear the initial parameters
+      onParametersUsed();
+    }
+  }, [initialParameters, onParametersUsed, availableIndicators]);
+
+  const loadIndicators = async () => {
+    try {
+      const response = await stockApi.getIndicators();
+      setAvailableIndicators(response.indicators || []);
+    } catch (err) {
+      console.error('Failed to load indicators:', err);
+    }
+  };
 
   const loadStockGroups = async () => {
     try {
@@ -210,14 +236,22 @@ export const StockScanAnalysisForm: React.FC<StockScanAnalysisFormProps> = ({
 
   // Scanner management functions
   const addScanner = (scannerId: string) => {
-    const scannerDef = AVAILABLE_SCANNERS.find(s => s.id === scannerId);
-    if (!scannerDef) return;
+    const indicator = availableIndicators.find(s => s.id === scannerId);
+    if (!indicator) return;
+
+    // Build default config from parameter schema
+    const defaultConfig: Record<string, any> = {};
+    Object.entries(indicator.parameter_schema).forEach(([key, schema]: [string, any]) => {
+      if (schema.default !== undefined) {
+        defaultConfig[key] = schema.default;
+      }
+    });
 
     const newScanner: SelectedScanner = {
       id: scannerId,
-      name: scannerDef.name,
+      name: indicator.name,
       weight: 1.0,
-      config: { ...scannerDef.defaultConfig }
+      config: defaultConfig,
     };
 
     setSelectedScanners([...selectedScanners, newScanner]);
@@ -292,10 +326,100 @@ export const StockScanAnalysisForm: React.FC<StockScanAnalysisFormProps> = ({
       scanners: Object.keys(scannerConfigs),
       scanner_configs: scannerConfigs,
       weights,
-      score_threshold: scoreThreshold,
+      buy_threshold: buyThreshold,
+      sell_threshold: sellThreshold,
     };
 
     onRunAnalysis(parameters);
+  };
+
+  // Dynamic configuration form renderer
+  const renderConfigForm = (scanner: SelectedScanner) => {
+    const indicator = availableIndicators.find(i => i.id === scanner.id);
+    if (!indicator) return null;
+
+    return (
+      <Stack spacing={2} sx={{ mt: 2 }}>
+        <Typography variant="h6">{indicator.name}</Typography>
+        {Object.entries(indicator.parameter_schema).map(([key, schema]: [string, any]) => {
+          const value = editingScanner?.config?.[key] ?? schema.default;
+          
+          if (schema.type === 'integer') {
+            return (
+              <TextField
+                key={key}
+                label={schema.description || key}
+                type="number"
+                value={value}
+                onChange={(e) => {
+                  const numValue = parseInt(e.target.value) || schema.default;
+                  setEditingScanner({
+                    ...editingScanner!,
+                    config: { ...editingScanner!.config, [key]: numValue },
+                  });
+                }}
+                fullWidth
+                inputProps={{ min: schema.min, max: schema.max }}
+              />
+            );
+          } else if (schema.type === 'float') {
+            return (
+              <TextField
+                key={key}
+                label={schema.description || key}
+                type="number"
+                value={value}
+                onChange={(e) => {
+                  const numValue = parseFloat(e.target.value) || schema.default;
+                  setEditingScanner({
+                    ...editingScanner!,
+                    config: { ...editingScanner!.config, [key]: numValue },
+                  });
+                }}
+                fullWidth
+                inputProps={{ min: schema.min, max: schema.max, step: '0.1' }}
+              />
+            );
+          } else if (schema.type === 'array' && schema.items?.type === 'integer') {
+            return (
+              <TextField
+                key={key}
+                label={schema.description || key}
+                value={JSON.stringify(value)}
+                onChange={(e) => {
+                  try {
+                    const parsed = JSON.parse(e.target.value);
+                    setEditingScanner({
+                      ...editingScanner!,
+                      config: { ...editingScanner!.config, [key]: parsed },
+                    });
+                  } catch {
+                    // Invalid JSON, ignore
+                  }
+                }}
+                fullWidth
+                helperText="Enter as JSON array, e.g., [30, 60, 90]"
+              />
+            );
+          }
+          
+          return (
+            <TextField
+              key={key}
+              label={schema.description || key}
+              value={value}
+              onChange={(e) => {
+                setEditingScanner({
+                  ...editingScanner!,
+                  config: { ...editingScanner!.config, [key]: e.target.value },
+                });
+              }}
+              fullWidth
+            />
+          );
+        })}
+      </Stack>
+    );
   };
 
   return (
@@ -468,6 +592,118 @@ export const StockScanAnalysisForm: React.FC<StockScanAnalysisFormProps> = ({
                     placeholder="e.g., Software"
                   />
                 </Grid>
+
+                {/* Recommendation Thresholds */}
+                <Grid item xs={12}>
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="subtitle2" gutterBottom sx={{ mb: 2 }}>
+                    Recommendation Thresholds
+                  </Typography>
+                </Grid>
+
+                {/* Buy Threshold */}
+                <Grid item xs={12}>
+                  <Box sx={{ px: 1 }}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
+                      <Tooltip title="Minimum score required for a BUY recommendation. Scores above this threshold indicate bullish signals." arrow>
+                        <Typography variant="body2" color="text.secondary">
+                          BUY Threshold (Score ≥ this value)
+                        </Typography>
+                      </Tooltip>
+                      <TextField
+                        type="number"
+                        size="small"
+                        value={buyThreshold}
+                        onChange={(e) => setBuyThreshold(Number(e.target.value))}
+                        inputProps={{ min: 0, max: 5, step: 0.1, style: { textAlign: 'right' } }}
+                        sx={{ width: '100px' }}
+                      />
+                    </Box>
+                    <Slider
+                      value={buyThreshold}
+                      onChange={(_, value) => setBuyThreshold(value as number)}
+                      min={0}
+                      max={5}
+                      step={0.1}
+                      marks={[
+                        { value: 0, label: '0' },
+                        { value: 0.5, label: '0.5' },
+                        { value: 1, label: '1.0' },
+                        { value: 2, label: '2.0' },
+                        { value: 3, label: '3.0' },
+                        { value: 5, label: '5.0' }
+                      ]}
+                      valueLabelDisplay="auto"
+                      sx={{
+                        '& .MuiSlider-markLabel': { fontSize: '0.7rem' },
+                        '& .MuiSlider-thumb': { bgcolor: 'success.main' },
+                        '& .MuiSlider-track': { bgcolor: 'success.main' },
+                        '& .MuiSlider-rail': { bgcolor: 'grey.300' }
+                      }}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                      Higher values = more conservative (fewer BUY signals)
+                    </Typography>
+                  </Box>
+                </Grid>
+
+                {/* Sell Threshold */}
+                <Grid item xs={12}>
+                  <Box sx={{ px: 1 }}>
+                    <Box display="flex" justifyContent="space-between" alignItems="center" mb={1}>
+                      <Tooltip title="Minimum absolute score required for a SELL recommendation. Scores below negative this value indicate bearish signals." arrow>
+                        <Typography variant="body2" color="text.secondary">
+                          SELL Threshold (Score ≤ -this value)
+                        </Typography>
+                      </Tooltip>
+                      <TextField
+                        type="number"
+                        size="small"
+                        value={sellThreshold}
+                        onChange={(e) => setSellThreshold(Number(e.target.value))}
+                        inputProps={{ min: 0, max: 5, step: 0.1, style: { textAlign: 'right' } }}
+                        sx={{ width: '100px' }}
+                      />
+                    </Box>
+                    <Slider
+                      value={sellThreshold}
+                      onChange={(_, value) => setSellThreshold(value as number)}
+                      min={0}
+                      max={5}
+                      step={0.1}
+                      marks={[
+                        { value: 0, label: '0' },
+                        { value: 0.5, label: '0.5' },
+                        { value: 1, label: '1.0' },
+                        { value: 2, label: '2.0' },
+                        { value: 3, label: '3.0' },
+                        { value: 5, label: '5.0' }
+                      ]}
+                      valueLabelDisplay="auto"
+                      sx={{
+                        '& .MuiSlider-markLabel': { fontSize: '0.7rem' },
+                        '& .MuiSlider-thumb': { bgcolor: 'error.main' },
+                        '& .MuiSlider-track': { bgcolor: 'error.main' },
+                        '& .MuiSlider-rail': { bgcolor: 'grey.300' }
+                      }}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                      Higher values = more conservative (fewer SELL signals)
+                    </Typography>
+                  </Box>
+                </Grid>
+
+                {/* Threshold Explanation */}
+                <Grid item xs={12}>
+                  <Box sx={{ p: 1.5, bgcolor: 'info.lighter', borderRadius: 1, border: '1px solid', borderColor: 'info.light' }}>
+                    <Typography variant="caption" color="text.secondary">
+                      <strong>How it works:</strong><br />
+                      • <strong style={{ color: '#2e7d32' }}>BUY</strong>: Score ≥ {buyThreshold.toFixed(1)} (bullish signals dominate)<br />
+                      • <strong style={{ color: '#757575' }}>HOLD</strong>: Score between -{sellThreshold.toFixed(1)} and {buyThreshold.toFixed(1)} (neutral)<br />
+                      • <strong style={{ color: '#d32f2f' }}>SELL</strong>: Score ≤ -{sellThreshold.toFixed(1)} (bearish signals dominate)
+                    </Typography>
+                  </Box>
+                </Grid>
               </Grid>
             </CardContent>
           </Card>
@@ -566,17 +802,17 @@ export const StockScanAnalysisForm: React.FC<StockScanAnalysisFormProps> = ({
         <DialogTitle>Select Scanner to Add</DialogTitle>
         <DialogContent>
           <List>
-            {AVAILABLE_SCANNERS.filter(s => !selectedScanners.find(selected => selected.id === s.id)).map(scanner => (
+            {availableIndicators.filter(s => !selectedScanners.find(selected => selected.id === s.id)).map(indicator => (
               <ListItem
-                key={scanner.id}
+                key={indicator.id}
                 button
                 onClick={() => {
-                  addScanner(scanner.id);
+                  addScanner(indicator.id);
                 }}
               >
                 <ListItemText
-                  primary={scanner.name}
-                  secondary={scanner.description}
+                  primary={indicator.name}
+                  secondary={indicator.description}
                 />
               </ListItem>
             ))}
@@ -624,124 +860,7 @@ export const StockScanAnalysisForm: React.FC<StockScanAnalysisFormProps> = ({
       <Dialog open={editingScanner !== null} onClose={() => { setEditingScanner(null); setEditingScannerIndex(null); }} maxWidth="sm" fullWidth>
         <DialogTitle>Edit Scanner Configuration</DialogTitle>
         <DialogContent>
-          {editingScanner && (
-            <Stack spacing={2} sx={{ mt: 2 }}>
-              <Typography variant="h6">{editingScanner.name}</Typography>
-              {editingScanner.id === 'ema_cross' && (
-                <>
-                  <TextField
-                    label="Short EMA Period"
-                    type="number"
-                    value={editingScanner.config?.short || 20}
-                    onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, short: parseInt(e.target.value) || 20 } })}
-                    fullWidth
-                  />
-                  <TextField
-                    label="Long EMA Period"
-                    type="number"
-                    value={editingScanner.config?.long || 50}
-                    onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, long: parseInt(e.target.value) || 50 } })}
-                    fullWidth
-                  />
-                </>
-              )}
-              {editingScanner.id === 'macd' && (
-                <>
-                  <TextField
-                    label="Fast Period"
-                    type="number"
-                    value={editingScanner.config?.fast || 12}
-                    onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, fast: parseInt(e.target.value) || 12 } })}
-                    fullWidth
-                  />
-                  <TextField
-                    label="Slow Period"
-                    type="number"
-                    value={editingScanner.config?.slow || 26}
-                    onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, slow: parseInt(e.target.value) || 26 } })}
-                    fullWidth
-                  />
-                  <TextField
-                    label="Signal Period"
-                    type="number"
-                    value={editingScanner.config?.signal || 9}
-                    onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, signal: parseInt(e.target.value) || 9 } })}
-                    fullWidth
-                  />
-                </>
-              )}
-              {editingScanner.id === 'rsi' && (
-                <>
-                  <TextField
-                    label="RSI Period"
-                    type="number"
-                    value={editingScanner.config?.window || 14}
-                    onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, window: parseInt(e.target.value) || 14 } })}
-                    fullWidth
-                  />
-                  <TextField
-                    label="Lower Threshold"
-                    type="number"
-                    value={editingScanner.config?.lower || 30}
-                    onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, lower: parseFloat(e.target.value) || 30 } })}
-                    fullWidth
-                  />
-                  <TextField
-                    label="Upper Threshold"
-                    type="number"
-                    value={editingScanner.config?.upper || 70}
-                    onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, upper: parseFloat(e.target.value) || 70 } })}
-                    fullWidth
-                  />
-                </>
-              )}
-              {editingScanner.id === 'volume' && (
-                <TextField
-                  label="Volume SMA Period"
-                  type="number"
-                  value={editingScanner.config?.window || 20}
-                  onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, window: parseInt(e.target.value) || 20 } })}
-                  fullWidth
-                />
-              )}
-              {editingScanner.id === 'stochastic' && (
-                <>
-                  <TextField
-                    label="K Period"
-                    type="number"
-                    value={editingScanner.config?.k_period || 14}
-                    onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, k_period: parseInt(e.target.value) || 14 } })}
-                    fullWidth
-                  />
-                  <TextField
-                    label="D Period"
-                    type="number"
-                    value={editingScanner.config?.d_period || 3}
-                    onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, d_period: parseInt(e.target.value) || 3 } })}
-                    fullWidth
-                  />
-                </>
-              )}
-              {editingScanner.id === 'atr' && (
-                <TextField
-                  label="ATR Period"
-                  type="number"
-                  value={editingScanner.config?.window || 14}
-                  onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, window: parseInt(e.target.value) || 14 } })}
-                  fullWidth
-                />
-              )}
-              {editingScanner.id === 'adx' && (
-                <TextField
-                  label="ADX Period"
-                  type="number"
-                  value={editingScanner.config?.window || 14}
-                  onChange={(e) => setEditingScanner({ ...editingScanner, config: { ...editingScanner.config, window: parseInt(e.target.value) || 14 } })}
-                  fullWidth
-                />
-              )}
-            </Stack>
-          )}
+          {editingScanner && renderConfigForm(editingScanner)}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => { setEditingScanner(null); setEditingScannerIndex(null); }}>Cancel</Button>
@@ -764,4 +883,3 @@ export const StockScanAnalysisForm: React.FC<StockScanAnalysisFormProps> = ({
     </Box>
   );
 };
-

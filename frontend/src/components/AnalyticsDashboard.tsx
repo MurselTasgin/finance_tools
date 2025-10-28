@@ -130,6 +130,9 @@ export const AnalyticsDashboard: React.FC = () => {
   const [sortBy, setSortBy] = useState<string>('date');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
+  // Rerun state - for pre-populating forms when rerunning analyses
+  const [rerunParameters, setRerunParameters] = useState<any>(null);
+
   // Analysis functions
   const viewResult = (result: AnalysisResult) => {
     setSelectedResult(result);
@@ -147,6 +150,38 @@ export const AnalyticsDashboard: React.FC = () => {
       historyItem.analysis_name,
       historyItem.parameters
     );
+  };
+
+  // Handler for rerunning from results viewer - navigates to form with pre-filled parameters
+  const handleRerunWithParameters = (analysisType: string, parameters: any) => {
+    console.log('Rerun requested with parameters:', {
+      analysisType,
+      parameters,
+      hasScannerConfigs: !!parameters?.scanner_configs,
+      hasWeights: !!parameters?.weights,
+      scannerIds: parameters?.scanner_configs ? Object.keys(parameters.scanner_configs) : []
+    });
+    
+    // Store parameters for pre-filling the form
+    setRerunParameters(parameters);
+
+    // Navigate to the appropriate tab based on analysis type
+    switch (analysisType) {
+      case 'stock_scan':
+        setActiveTab(3); // Stock Scan tab
+        break;
+      case 'etf_scan':
+        setActiveTab(1); // ETF Scan tab
+        break;
+      case 'stock_technical':
+        setActiveTab(2); // Stock Technical tab
+        break;
+      case 'etf_technical':
+        setActiveTab(0); // ETF Technical tab
+        break;
+      default:
+        console.warn('Unknown analysis type:', analysisType);
+    }
   };
 
   const handleExport = (result: AnalysisResult, format: string) => {
@@ -444,15 +479,17 @@ export const AnalyticsDashboard: React.FC = () => {
             capabilities={capabilities}
             onRunAnalysis={runAnalysis}
             running={runningAnalysis === 'stock_scan'}
+            initialParameters={rerunParameters}
+            onParametersUsed={() => setRerunParameters(null)}
           />
         </TabPanel>
 
         <TabPanel value={activeTab} index={4}>
-          <AnalysisJobsPanel />
+          <AnalysisJobsPanel onRerunRequest={handleRerunWithParameters} />
         </TabPanel>
 
         <TabPanel value={activeTab} index={5}>
-          <AnalysisResultsPanel />
+          <AnalysisResultsPanel onRerunRequest={handleRerunWithParameters} />
         </TabPanel>
       </Paper>
 
@@ -538,10 +575,12 @@ const StockTechnicalAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysi
   </Box>
 );
 
-const StockScanAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysis, running }) => (
+const StockScanAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysis, running, initialParameters, onParametersUsed }) => (
   <StockScanAnalysisForm
     onRunAnalysis={(parameters) => onRunAnalysis('stock_scan', 'Stock Scan Analysis', parameters)}
     running={running}
+    initialParameters={initialParameters}
+    onParametersUsed={onParametersUsed}
   />
 );
 

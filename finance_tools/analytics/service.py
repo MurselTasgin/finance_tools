@@ -22,9 +22,8 @@ from ..etfs.tefas.models import AnalysisResult, UserAnalysisHistory
 from ..etfs.analysis import EtfAnalyzer, EtfScanner, IndicatorRequest, KeywordFilter
 from ..stocks.analytics.technical_analysis import TechnicalAnalysisTool
 from ..stocks.analysis import (
-    StockAnalyzer, 
-    StockScanner, 
-    StockIndicatorRequest, 
+    StockScanner,
+    StockIndicatorRequest,
     StockIndicatorResult,
     StockScanCriteria
 )
@@ -39,7 +38,6 @@ class AnalyticsService:
         self.etf_analyzer = EtfAnalyzer()
         self.etf_scanner = EtfScanner()
         self.stock_analyzer = TechnicalAnalysisTool()
-        self.stock_analyzer_new = StockAnalyzer()
         self.stock_scanner = StockScanner()
 
         # Cache settings
@@ -651,63 +649,48 @@ class AnalyticsService:
         symbols: Optional[List[str]] = None,
         scanners: Optional[List[str]] = None,
         scanner_configs: Optional[Dict[str, Any]] = None,
-        score_threshold: float = 0.0,
+        weights: Optional[Dict[str, float]] = None,
+        buy_threshold: Optional[float] = None,
+        sell_threshold: Optional[float] = None,
+        score_threshold: Optional[float] = None,  # Deprecated: kept for backward compatibility
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         column: str = "close",
-        ema_short: int = 20,
-        ema_long: int = 50,
-        macd_slow: int = 26,
-        macd_fast: int = 12,
-        macd_sign: int = 9,
-        rsi_window: int = 14,
-        rsi_lower: float = 30.0,
-        rsi_upper: float = 70.0,
-        volume_window: int = 20,
-        stoch_k_period: int = 14,
-        stoch_d_period: int = 3,
-        atr_window: int = 14,
-        adx_window: int = 14,
-        weights: Optional[Dict[str, float]] = None,
-        buy_threshold: float = 1.0,
-        sell_threshold: float = 1.0,
         sector: Optional[str] = None,
         industry: Optional[str] = None,
         user_id: Optional[str] = None,
         save_results: bool = True
     ) -> Dict[str, Any]:
         """
-        Run stock scan analysis for buy/sell/hold recommendations.
+        Run stock scan analysis for buy/sell/hold recommendations using plugin-based indicators.
         
-        This method performs comprehensive stock scanning with enhanced volume
-        and momentum indicators including OBV, Stochastic, ATR, and ADX.
+        This method performs stock scanning with dynamically selected indicators.
+        All indicator parameters are extracted from the indicator registry - NO hardcoded logic.
 
         Args:
             db_session: Database session
-            symbols: Specific symbols to scan
-            scanners: List of scanner names to run
-            scanner_configs: Configuration for specific scanners
-            score_threshold: Minimum score for recommendations
+            symbols: Specific symbols to scan (optional - scans all if not provided)
+            scanners: List of indicator IDs to include (e.g., ['ema_cross', 'macd', 'rsi'])
+            scanner_configs: Per-indicator configuration dict (e.g., {'ema_cross': {'short': 20, 'long': 50}})
+            weights: Per-indicator weights for scoring (e.g., {'ema_cross': 2.0, 'macd': 1.5})
+            buy_threshold: Minimum score for BUY recommendation (default: 1.0)
+            sell_threshold: Minimum absolute score for SELL recommendation (default: 1.0)
+            score_threshold: Deprecated - use buy_threshold and sell_threshold instead
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
-            column: Column to analyze (default: close)
-            ema_short, ema_long: EMA parameters
-            macd_slow, macd_fast, macd_sign: MACD parameters
-            rsi_window, rsi_lower, rsi_upper: RSI parameters
-            volume_window: Volume SMA window
-            stoch_k_period, stoch_d_period: Stochastic parameters
-            atr_window: ATR window
-            adx_window: ADX window
-            weights: Scoring weights for different indicators
-            buy_threshold: Threshold for buy recommendations
-            sell_threshold: Threshold for sell recommendations
-            sector: Filter by sector
-            industry: Filter by industry
-            user_id: User identifier for tracking
-            save_results: Whether to save results to database
+            column: Column to analyze (default: 'close')
+            sector: Filter by sector (optional)
+            industry: Filter by industry (optional)
+            user_id: User identifier for tracking (optional)
+            save_results: Whether to save results to database (default: True)
 
         Returns:
-            Scan results with recommendations
+            Dict with scan results including recommendations and detailed indicator breakdowns
+
+        Note:
+            All indicator-specific parameters are handled dynamically via scanner_configs.
+            The system uses the plugin-based indicator registry - any new indicator automatically
+            becomes available without code changes.
         """
         start_time = time.time()
 
@@ -716,97 +699,84 @@ class AnalyticsService:
             start = datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else None
             end = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else None
 
-            # Build indicators based on selected scanners
-            indicators = {}
+            # Build indicators dynamically using the registry - NO hardcoded indicator logic
+            from ..stocks.analysis.indicators import registry as indicator_registry
             
-            if scanners and scanner_configs:
-                for scanner_id in scanners:
-                    config = scanner_configs.get(scanner_id, {})
-                    
-                    if scanner_id == 'ema_cross':
-                        short = config.get('short', ema_short)
-                        long = config.get('long', ema_long)
-                        indicators["ema"] = {"windows": [short, long]}
-                        indicators["ema_cross"] = {"short": short, "long": long}
-                    elif scanner_id == 'macd':
-                        slow = config.get('slow', macd_slow)
-                        fast = config.get('fast', macd_fast)
-                        signal = config.get('signal', macd_sign)
-                        indicators["macd"] = {"window_slow": slow, "window_fast": fast, "window_sign": signal}
-                    elif scanner_id == 'rsi':
-                        window = config.get('window', rsi_window)
-                        indicators["rsi"] = {"window": window}
-                    elif scanner_id == 'momentum':
-                        windows = config.get('windows', [30, 60, 90, 180, 360])
-                        indicators["momentum"] = {"windows": windows}
-                    elif scanner_id == 'daily_momentum':
-                        windows = config.get('windows', [30, 60, 90, 180, 360])
-                        indicators["daily_momentum"] = {"windows": windows}
-                    elif scanner_id == 'supertrend':
-                        hl_factor = config.get('hl_factor', 0.05)
-                        atr_period = config.get('atr_period', 10)
-                        multiplier = config.get('multiplier', 3.0)
-                        indicators["supertrend"] = {"hl_factor": hl_factor, "atr_period": atr_period, "multiplier": multiplier}
-                    elif scanner_id == 'volume':
-                        window = config.get('window', volume_window)
-                        indicators["volume_obv"] = {}
-                        indicators["volume_sma"] = {"window": window}
-                    elif scanner_id == 'stochastic':
-                        k_period = config.get('k_period', stoch_k_period)
-                        d_period = config.get('d_period', stoch_d_period)
-                        indicators["stochastic"] = {"k_period": k_period, "d_period": d_period}
-                    elif scanner_id == 'atr':
-                        window = config.get('window', atr_window)
-                        indicators["atr"] = {"window": window}
-                    elif scanner_id == 'adx':
-                        window = config.get('window', adx_window)
-                        indicators["adx"] = {"window": window}
-            else:
-                # Default indicators
-                indicators = {
-                    "ema": {"windows": [ema_short, ema_long]},
-                    "ema_cross": {"short": ema_short, "long": ema_long},
-                    "macd": {"window_slow": macd_slow, "window_fast": macd_fast, "window_sign": macd_sign},
-                    "rsi": {"window": rsi_window},
-                    "volume_obv": {},
-                    "volume_sma": {"window": volume_window},
-                    "stochastic": {"k_period": stoch_k_period, "d_period": stoch_d_period},
-                    "atr": {"window": atr_window},
-                    "adx": {"window": adx_window}
-                }
-
-            # Build keyword filter (for future use with stock names)
+            indicators = {}
             keyword_filter = None  # No keyword filtering for stocks yet
+            
+            if scanners:
+                for scanner_id in scanners:
+                    indicator = indicator_registry.get(scanner_id)
+                    if indicator is None:
+                        self.logger.warning(f"⚠️ Unknown indicator: {scanner_id}")
+                        continue
+                    
+                    # Get parameter schema from the indicator
+                    schema = indicator.get_parameter_schema()
+                    
+                    # Build config from scanner_configs, using schema defaults as fallback
+                    config = {}
+                    if scanner_configs and scanner_id in scanner_configs:
+                        user_config = scanner_configs[scanner_id]
+                        for param_name, param_schema in schema.items():
+                            config[param_name] = user_config.get(param_name, param_schema.get('default', None))
+                    else:
+                        # Use schema defaults
+                        for param_name, param_schema in schema.items():
+                            if 'default' in param_schema:
+                                config[param_name] = param_schema['default']
+                    
+                    indicators[scanner_id] = config
 
-            # Create analysis request
-            request = StockIndicatorRequest(
+            # Fetch stock data from database
+            self.logger.info(f"📊 Fetching stock data for {len(symbols) if symbols else 'all'} symbols")
+            from ..stocks.analysis import StockDataRetriever
+            
+            retriever = StockDataRetriever()
+            df_all = retriever.fetch_info(
                 symbols=symbols,
                 start=start,
                 end=end,
-                column=column,
-                indicators=indicators,
-                keyword_filter=keyword_filter,
                 sector=sector,
                 industry=industry
             )
-
-            # Execute analysis
-            self.logger.info(f"📊 Executing stock scan analysis for {len(symbols) if symbols else 'all'} symbols")
-            results = self.stock_analyzer_new.analyze(request)
-            self.logger.info(f"📊 Analysis returned {len(results)} symbol results")
-
-            execution_time_ms = int((time.time() - start_time) * 1000)
-
-            # Convert results to symbol-to-DataFrame mapping
+            
+            self.logger.info(f"📊 Fetched {len(df_all)} rows of stock data")
+            
+            if df_all.empty:
+                self.logger.warning("⚠️ No stock data available")
+                return {
+                    "analysis_type": "stock_scan",
+                    "analysis_name": "Stock Scan Analysis",
+                    "parameters": {"symbols": symbols, "start_date": start_date, "end_date": end_date, "column": column},
+                    "results": [],
+                    "result_count": 0,
+                    "execution_time_ms": int((time.time() - start_time) * 1000),
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            
+            # Convert to symbol-to-DataFrame mapping
             import pandas as pd
             symbol_to_df = {}
-            for result in results:
-                if isinstance(result, StockIndicatorResult):
-                    symbol_to_df[result.symbol] = result.data
+            for symbol in df_all['symbol'].unique():
+                symbol_df = df_all[df_all['symbol'] == symbol].copy()
+                # Keep date as a column (not index) because scanner needs it
+                # Sort by date to ensure proper time series order
+                if 'date' in symbol_df.columns:
+                    symbol_df = symbol_df.sort_values('date')
+                symbol_to_df[symbol] = symbol_df
             
             self.logger.info(f"📊 Prepared symbol_to_df with {len(symbol_to_df)} symbols")
+            
+            # Debug: Log first symbol's structure
+            if symbol_to_df:
+                first_symbol = list(symbol_to_df.keys())[0]
+                first_df = symbol_to_df[first_symbol]
+                self.logger.info(f"📊 Sample symbol '{first_symbol}' - Columns: {list(first_df.columns)}, Rows: {len(first_df)}, Date range: {first_df['date'].min()} to {first_df['date'].max()}")
 
             if not symbol_to_df:
+                execution_time_ms = int((time.time() - start_time) * 1000)
                 return {
                     "analysis_type": "stock_scan",
                     "analysis_name": "Stock Scan Analysis",
@@ -817,69 +787,43 @@ class AnalyticsService:
                     "timestamp": datetime.utcnow().isoformat(),
                 }
 
-            # Build scan criteria
-            scanner_weight_mapping = {
-                'ema_cross': 'w_ema_cross',
-                'macd': 'w_macd',
-                'rsi': 'w_rsi',
-                'momentum': 'w_momentum',
-                'daily_momentum': 'w_momentum_daily',
-                'supertrend': 'w_supertrend',
-                'volume': 'w_volume',
-                'stochastic': 'w_stochastic',
-                'atr': 'w_atr',
-                'adx': 'w_adx'
-            }
-
-            # Default weights if none provided
+            # Build scan criteria dynamically - NO hardcoded indicator names
+            from ..stocks.analysis.indicators import registry as indicator_registry
+            
+            # Prepare weights: if not provided, default to 1.0 for all selected scanners
             if weights is None:
-                weights = {}
-                for scanner_id in scanners or []:
-                    if scanner_id in scanner_weight_mapping:
-                        backend_key = scanner_weight_mapping[scanner_id]
-                        weights[backend_key] = 1.0
+                weights = {scanner_id: 1.0 for scanner_id in (scanners or [])}
+            
+            # Determine thresholds (with backward compatibility)
+            # If buy_threshold/sell_threshold not provided, fall back to score_threshold
+            final_buy_threshold = buy_threshold if buy_threshold is not None else (score_threshold if score_threshold is not None else 1.0)
+            final_sell_threshold = sell_threshold if sell_threshold is not None else (score_threshold if score_threshold is not None else 1.0)
 
-            # Convert frontend weights to backend format
-            backend_weights = {}
-            for scanner_id, weight in weights.items():
-                if scanner_id in scanner_weight_mapping:
-                    backend_key = scanner_weight_mapping[scanner_id]
-                    backend_weights[backend_key] = weight
-                else:
-                    backend_weights[scanner_id] = weight  # Already in backend format
+            # Ensure minimum threshold of 0.0
+            final_buy_threshold = max(final_buy_threshold, 0.0)
+            final_sell_threshold = max(final_sell_threshold, 0.0)
 
-            # Run the scanner
+            # Create criteria with base parameters
+            # Note: StockScanCriteria has defaults for all parameters
             criteria = StockScanCriteria(
                 column=column,
-                ema_short=ema_short,
-                ema_long=ema_long,
-                macd_slow=macd_slow,
-                macd_fast=macd_fast,
-                macd_sign=macd_sign,
-                rsi_window=rsi_window,
-                rsi_lower=rsi_lower,
-                rsi_upper=rsi_upper,
-                volume_window=volume_window,
-                stoch_k_period=stoch_k_period,
-                stoch_d_period=stoch_d_period,
-                atr_window=atr_window,
-                adx_window=adx_window,
-                w_ema_cross=backend_weights.get("w_ema_cross", 1.0 if scanners and 'ema_cross' in scanners else 0.0),
-                w_macd=backend_weights.get("w_macd", 1.0 if scanners and 'macd' in scanners else 0.0),
-                w_rsi=backend_weights.get("w_rsi", 1.0 if scanners and 'rsi' in scanners else 0.0),
-                w_momentum=backend_weights.get("w_momentum", 1.0 if scanners and 'momentum' in scanners else 0.0),
-                w_momentum_daily=backend_weights.get("w_momentum_daily", 1.0 if scanners and 'daily_momentum' in scanners else 0.0),
-                w_supertrend=backend_weights.get("w_supertrend", 1.0 if scanners and 'supertrend' in scanners else 0.0),
-                w_volume=backend_weights.get("w_volume", 1.0 if scanners and 'volume' in scanners else 0.0),
-                w_stochastic=backend_weights.get("w_stochastic", 1.0 if scanners and 'stochastic' in scanners else 0.0),
-                w_atr=backend_weights.get("w_atr", 1.0 if scanners and 'atr' in scanners else 0.0),
-                w_adx=backend_weights.get("w_adx", 1.0 if scanners and 'adx' in scanners else 0.0),
-                score_buy_threshold=max(score_threshold, 1.0),
-                score_sell_threshold=max(score_threshold, 1.0),
+                score_buy_threshold=final_buy_threshold,
+                score_sell_threshold=final_sell_threshold,
             )
+            
+            # Dynamically set weights for ALL registered indicators
+            # Weight = value from weights dict if provided, else 1.0 if selected, 0.0 if not
+            all_indicator_ids = indicator_registry.get_all_ids()
+            for indicator_id in all_indicator_ids:
+                weight_attr = f"w_{indicator_id}"
+                # Check if this indicator is in the selected scanners list
+                is_selected = scanners and indicator_id in scanners
+                weight_value = weights.get(indicator_id, 1.0 if is_selected else 0.0)
+                # Dynamically set the weight attribute
+                setattr(criteria, weight_attr, weight_value)
 
-            # Perform the scan
-            scan_results = self.stock_scanner.scan(symbol_to_df, criteria)
+            # Perform the scan with custom scanner configs
+            scan_results = self.stock_scanner.scan(symbol_to_df, criteria, scanner_configs)
 
             # Format results for API response
             formatted_results = []
@@ -921,6 +865,28 @@ class AnalyticsService:
                         if v is not None and not math.isnan(v):
                             clean_indicators[k] = float(v)
                 
+                # Prepare indicator_details (already in correct format from scanner)
+                clean_indicator_details = {}
+                if scan_result.indicator_details:
+                    for ind_id, ind_data in scan_result.indicator_details.items():
+                        # Clean values dict
+                        clean_values = {}
+                        if isinstance(ind_data.get("values"), dict):
+                            for k, v in ind_data["values"].items():
+                                if v is not None and not math.isnan(v):
+                                    clean_values[k] = float(v)
+                        
+                        clean_indicator_details[ind_id] = {
+                            "name": ind_data.get("name", ind_id),
+                            "id": ind_data.get("id", ind_id),
+                            "values": clean_values,
+                            "raw": float(ind_data.get("raw", 0.0)) if not math.isnan(ind_data.get("raw", 0)) else 0.0,
+                            "weight": float(ind_data.get("weight", 0.0)) if not math.isnan(ind_data.get("weight", 0)) else 0.0,
+                            "contribution": float(ind_data.get("contribution", 0.0)) if not math.isnan(ind_data.get("contribution", 0)) else 0.0,
+                            "calculation_details": ind_data.get("calculation_details", []),
+                            "reasons": ind_data.get("reasons", [])
+                        }
+                
                 formatted_results.append({
                     "symbol": scan_result.symbol,
                     "recommendation": recommendation,
@@ -928,6 +894,7 @@ class AnalyticsService:
                     "reasons": scan_result.suggestion.reasons,
                     "components": clean_components,
                     "indicators_snapshot": clean_indicators,
+                    "indicator_details": clean_indicator_details,  # New: grouped per-indicator data
                     "timestamp": scan_result.timestamp.isoformat() if scan_result.timestamp else None,
                     "last_value": scan_result.last_value,
                 })
@@ -947,8 +914,8 @@ class AnalyticsService:
                     "scanners": scanners,
                     "scanner_configs": scanner_configs,
                     "weights": weights,
-                    "buy_threshold": buy_threshold,
-                    "sell_threshold": sell_threshold,
+                    "buy_threshold": final_buy_threshold,
+                    "sell_threshold": final_sell_threshold,
                 },
                 "results": sorted(formatted_results, key=lambda x: x["score"], reverse=True),
                 "result_count": len(formatted_results),

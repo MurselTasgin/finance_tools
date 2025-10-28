@@ -1923,26 +1923,11 @@ def run_analysis_sync(analysis_type: str, analysis_name: str, parameters: dict, 
                     symbols=parameters.get('symbols'),
                     scanners=parameters.get('scanners'),
                     scanner_configs=parameters.get('scanner_configs'),
+                    weights=parameters.get('weights'),
                     score_threshold=parameters.get('score_threshold', 0.0),
                     start_date=parameters.get('start_date'),
                     end_date=parameters.get('end_date'),
                     column=parameters.get('column', 'close'),
-                    ema_short=parameters.get('ema_short', 20),
-                    ema_long=parameters.get('ema_long', 50),
-                    macd_slow=parameters.get('macd_slow', 26),
-                    macd_fast=parameters.get('macd_fast', 12),
-                    macd_sign=parameters.get('macd_sign', 9),
-                    rsi_window=parameters.get('rsi_window', 14),
-                    rsi_lower=parameters.get('rsi_lower', 30.0),
-                    rsi_upper=parameters.get('rsi_upper', 70.0),
-                    volume_window=parameters.get('volume_window', 20),
-                    stoch_k_period=parameters.get('stoch_k_period', 14),
-                    stoch_d_period=parameters.get('stoch_d_period', 3),
-                    atr_window=parameters.get('atr_window', 14),
-                    adx_window=parameters.get('adx_window', 14),
-                    weights=parameters.get('weights'),
-                    buy_threshold=parameters.get('buy_threshold', 1.0),
-                    sell_threshold=parameters.get('sell_threshold', 1.0),
                     sector=parameters.get('sector'),
                     industry=parameters.get('industry'),
                     save_results=False,  # Don't save here - backend will save after this returns
@@ -2500,6 +2485,34 @@ async def run_stock_scan_analysis(
         return result
     except Exception as e:
         logger.error(f"Error in stock scan analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/analytics/stock/indicators")
+async def get_stock_indicators():
+    """
+    Get all available stock indicators with their schemas.
+    This endpoint returns plugin-based indicators that can be dynamically added to the system.
+    """
+    try:
+        # Import registry to get all registered indicators
+        from finance_tools.stocks.analysis.indicators.registry import registry
+        
+        indicators = []
+        for indicator_id, indicator in registry.get_all().items():
+            indicators.append({
+                'id': indicator_id,
+                'name': indicator.get_name(),
+                'description': indicator.get_description(),
+                'required_columns': indicator.get_required_columns(),
+                'parameter_schema': indicator.get_parameter_schema(),
+                'capabilities': indicator.get_capabilities()
+            })
+        
+        return {"indicators": indicators}
+    
+    except Exception as e:
+        logger.error(f"Error getting stock indicators: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

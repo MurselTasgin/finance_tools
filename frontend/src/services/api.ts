@@ -330,6 +330,11 @@ export const stockApi = {
     const response = await api.get('/api/stocks/symbols');
     return response.data;
   },
+
+  getIndicators: async (): Promise<{ indicators: any[] }> => {
+    const response = await api.get('/api/analytics/stock/indicators');
+    return response.data;
+  },
 };
 
 // Analytics API

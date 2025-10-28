@@ -47,11 +47,15 @@ import {
   Visibility as ViewIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
-import { useQuery } from 'react-query';
+import { useQuery, useQueryClient } from 'react-query';
 import { analyticsApi } from '../services/api';
 import AnalysisResultsViewer from './AnalysisResultsViewer';
 
-export const AnalysisResultsPanel: React.FC = () => {
+interface AnalysisResultsPanelProps {
+  onRerunRequest?: (analysisType: string, parameters: any) => void;
+}
+
+export const AnalysisResultsPanel: React.FC<AnalysisResultsPanelProps> = ({ onRerunRequest }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -59,6 +63,7 @@ export const AnalysisResultsPanel: React.FC = () => {
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [selectedResult, setSelectedResult] = useState<any>(null);
   const [resultsDialogOpen, setResultsDialogOpen] = useState(false);
+  const queryClient = useQueryClient();
 
   // Fetch analysis results with pagination
   const {
@@ -304,7 +309,35 @@ export const AnalysisResultsPanel: React.FC = () => {
         </DialogTitle>
         <DialogContent>
           {selectedResult && (
-            <AnalysisResultsViewer result={selectedResult} />
+            <AnalysisResultsViewer
+              result={selectedResult}
+              onRerun={async (parameters) => {
+                try {
+                  // If onRerunRequest is provided for stock_scan, use it to navigate to form
+                  if (onRerunRequest && selectedResult.analysis_type === 'stock_scan') {
+                    onRerunRequest(selectedResult.analysis_type, parameters);
+                    setResultsDialogOpen(false);
+                    return;
+                  }
+                  
+                  // Otherwise, start analysis via API
+                  await analyticsApi.startAnalysis(
+                    selectedResult.analysis_type,
+                    selectedResult.analysis_name,
+                    parameters
+                  );
+                  // Refresh the results list
+                  queryClient.invalidateQueries('analysisResults');
+                  // Close the results dialog
+                  setResultsDialogOpen(false);
+                  // Show success message
+                  console.log('Analysis rerun started successfully');
+                } catch (error) {
+                  console.error('Failed to start rerun:', error);
+                  // TODO: Show error message to user
+                }
+              }}
+            />
           )}
         </DialogContent>
         <DialogActions>
