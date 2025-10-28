@@ -10,7 +10,7 @@ from ...logging import get_logger
 from .types import IndicatorRequest, IndicatorResult
 from .retriever import EtfDataRetriever
 from .filters import TitleFilter
-from .indicators import TechnicalIndicatorCalculator
+from .indicators import registry, IndicatorConfig
 
 
 @dataclass
@@ -19,7 +19,6 @@ class EtfAnalyzer:
 
     retriever: EtfDataRetriever = field(default_factory=EtfDataRetriever)
     title_filter: TitleFilter = field(default_factory=TitleFilter)
-    indicator_calculator: TechnicalIndicatorCalculator = field(default_factory=TechnicalIndicatorCalculator)
 
     def __post_init__(self):
         self.logger = get_logger("etf_analyzer")
@@ -41,13 +40,43 @@ class EtfAnalyzer:
         if df is None or df.empty:
             return []
 
-        # Compute indicators per code
+        # Compute indicators per code using plugin-based system
         results: List[IndicatorResult] = []
         for code, g in df.groupby("code", sort=True):
             g_sorted = g.sort_values("date").reset_index(drop=True)
-            enriched = self.indicator_calculator.compute(g_sorted, request.column, request.indicators)
+            
+            # Use plugin-based indicators
+            enriched = self._compute_indicators(g_sorted, request.column, request.indicators)
             results.append(IndicatorResult(code=code, data=enriched))
 
         return results
+    
+    def _compute_indicators(self, df: pd.DataFrame, column: str, indicators: Dict[str, Dict]) -> pd.DataFrame:
+        """Compute indicators using the plugin-based system"""
+        if df is None or df.empty or column not in df.columns:
+            return df
+        
+        result = df.copy()
+        
+        # Process each indicator configuration
+        for indicator_name, params in indicators.items():
+            indicator = registry.get(indicator_name)
+            if indicator is None:
+                self.logger.warning(f"⚠️ Unknown indicator: {indicator_name}")
+                continue
+            
+            # Create indicator config
+            config = IndicatorConfig(
+                name=indicator.get_name(),
+                parameters=params,
+                weight=0  # Not used for analysis, only for scanning
+            )
+            
+            try:
+                result = indicator.calculate(result, column, config)
+            except Exception as e:
+                self.logger.error(f"Error calculating {indicator_name}: {e}")
+        
+        return result
 
 

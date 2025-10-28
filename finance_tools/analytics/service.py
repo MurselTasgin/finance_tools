@@ -273,62 +273,38 @@ class AnalyticsService:
             #         cached_result['results'] = cached_result['results']['results']
             #     return cached_result
 
-            # Build indicators based on selected scanners and their configurations
+            # Build indicators dynamically using the registry - NO hardcoded indicator logic
+            from ..etfs.analysis.indicators import registry as etf_indicator_registry
+            
             indicators = {}
             
-            # Map scanner IDs to their indicator configurations using UI parameters
-            if scanners and scanner_configs:
+            if scanners:
                 for scanner_id in scanners:
-                    config = scanner_configs.get(scanner_id, {})
+                    indicator = etf_indicator_registry.get(scanner_id)
+                    if indicator is None:
+                        self.logger.warning(f"⚠️ Unknown indicator: {scanner_id}")
+                        continue
                     
-                    if scanner_id == 'ema_cross':
-                        short = config.get('short', ema_short)
-                        long = config.get('long', ema_long)
-                        indicators["ema"] = {"windows": [short, long]}
-                        indicators["ema_cross"] = {"short": short, "long": long}
-                    elif scanner_id == 'macd':
-                        slow = config.get('slow', macd_slow)
-                        fast = config.get('fast', macd_fast)
-                        signal = config.get('signal', macd_sign)
-                        indicators["macd"] = {"window_slow": slow, "window_fast": fast, "window_sign": signal}
-                    elif scanner_id == 'rsi':
-                        window = config.get('window', rsi_window)
-                        indicators["rsi"] = {"window": window}
-                    elif scanner_id == 'momentum':
-                        windows = config.get('windows', [30, 60, 90, 180, 360])
-                        indicators["momentum"] = {"windows": windows}
-                    elif scanner_id == 'daily_momentum':
-                        windows = config.get('windows', [30, 60, 90, 180, 360])
-                        indicators["daily_momentum"] = {"windows": windows}
-                    elif scanner_id == 'supertrend':
-                        hl_factor = config.get('hl_factor', 0.05)
-                        atr_period = config.get('atr_period', 10)
-                        multiplier = config.get('multiplier', 3.0)
-                        indicators["supertrend"] = {"hl_factor": hl_factor, "atr_period": atr_period, "multiplier": multiplier}
-            else:
-                # Fallback to default indicators if no scanners specified
-                indicators = {
-                    "ema": {"windows": [ema_short, ema_long]},
-                    "ema_cross": {"short": ema_short, "long": ema_long},
-                    "macd": {"window_slow": macd_slow, "window_fast": macd_fast, "window_sign": macd_sign},
-                    "rsi": {"window": rsi_window},
-                }
+                    # Get parameter schema from the indicator
+                    schema = indicator.get_parameter_schema()
+                    
+                    # Build config from scanner_configs, using schema defaults as fallback
+                    config = {}
+                    if scanner_configs and scanner_id in scanner_configs:
+                        user_config = scanner_configs[scanner_id]
+                        for param_name, param_schema in schema.items():
+                            config[param_name] = user_config.get(param_name, param_schema.get('default', None))
+                    else:
+                        # Use schema defaults
+                        for param_name, param_schema in schema.items():
+                            if 'default' in param_schema:
+                                config[param_name] = param_schema['default']
+                    
+                    indicators[scanner_id] = config
 
             # Default weights if none provided, using only selected scanners
             if weights is None:
-                weights = {}
-                if 'ema_cross' in (scanners or []):
-                    weights["ema_cross"] = 1.0
-                if 'macd' in (scanners or []):
-                    weights["macd"] = 1.0
-                if 'rsi' in (scanners or []):
-                    weights["rsi"] = 1.0
-                if 'momentum' in (scanners or []):
-                    weights["momentum"] = 1.0
-                if 'daily_momentum' in (scanners or []):
-                    weights["daily_momentum"] = 1.0
-                if 'supertrend' in (scanners or []):
-                    weights["supertrend"] = 1.0
+                weights = {scanner_id: 1.0 for scanner_id in (scanners or [])}
 
             # Get data for scanning
             technical_results = self.run_etf_technical_analysis(
@@ -379,67 +355,27 @@ class AnalyticsService:
                     "timestamp": datetime.utcnow().isoformat(),
                 }
 
-            # Extract parameters from scanner configurations
-            ema_short_actual = ema_short
-            ema_long_actual = ema_long
-            macd_slow_actual = macd_slow
-            macd_fast_actual = macd_fast
-            macd_sign_actual = macd_sign
-            rsi_window_actual = rsi_window
+            # Build scan criteria dynamically - NO hardcoded indicator logic
             
-            if scanners and scanner_configs:
-                for scanner_id in scanners:
-                    config = scanner_configs.get(scanner_id, {})
-                    if scanner_id == 'ema_cross':
-                        ema_short_actual = config.get('short', ema_short)
-                        ema_long_actual = config.get('long', ema_long)
-                    elif scanner_id == 'macd':
-                        macd_slow_actual = config.get('slow', macd_slow)
-                        macd_fast_actual = config.get('fast', macd_fast)
-                        macd_sign_actual = config.get('signal', macd_sign)
-                    elif scanner_id == 'rsi':
-                        rsi_window_actual = config.get('window', rsi_window)
-
-            # Map frontend scanner weights to backend weight keys
-            # Frontend sends: {'ema_cross': 2.0, 'macd': 1.5, 'rsi': 1.0}
-            # Backend expects: {'w_ema': 2.0, 'w_macd': 1.5, 'w_rsi': 1.0}
-            scanner_weight_mapping = {
-                'ema_cross': 'w_ema',
-                'macd': 'w_macd', 
-                'rsi': 'w_rsi',
-                'momentum': 'w_momentum',
-                'daily_momentum': 'w_momentum_daily',
-                'supertrend': 'w_supertrend'
-            }
+            # Determine thresholds
+            final_buy_threshold = buy_threshold if buy_threshold is not None else max(score_threshold, 1.0)
+            final_sell_threshold = sell_threshold if sell_threshold is not None else max(score_threshold, 1.0)
             
-            # Convert frontend weights to backend format
-            backend_weights = {}
-            for scanner_id, weight in weights.items():
-                if scanner_id in scanner_weight_mapping:
-                    backend_key = scanner_weight_mapping[scanner_id]
-                    backend_weights[backend_key] = weight
-            
-            # Run the scanner with the configured criteria using only selected scanners
+            # Create criteria with base parameters
             criteria = EtfScanCriteria(
                 column=column,
-                ema_short=ema_short_actual,
-                ema_long=ema_long_actual,
-                macd_slow=macd_slow_actual,
-                macd_fast=macd_fast_actual,
-                macd_sign=macd_sign_actual,
-                rsi_window=rsi_window_actual,
-                rsi_lower=rsi_lower,
-                rsi_upper=rsi_upper,
-                # Use mapped weights for selected scanners, set others to 0
-                w_ema_cross=backend_weights.get("w_ema", 0.0) if 'ema_cross' in (scanners or []) else 0.0,
-                w_macd=backend_weights.get("w_macd", 0.0) if 'macd' in (scanners or []) else 0.0,
-                w_rsi=backend_weights.get("w_rsi", 0.0) if 'rsi' in (scanners or []) else 0.0,
-                w_momentum=backend_weights.get("w_momentum", 0.0) if 'momentum' in (scanners or []) else 0.0,
-                w_momentum_daily=backend_weights.get("w_momentum_daily", 0.0) if 'daily_momentum' in (scanners or []) else 0.0,
-                w_supertrend=backend_weights.get("w_supertrend", 0.0) if 'supertrend' in (scanners or []) else 0.0,
-                score_buy_threshold=max(score_threshold, 1.0),  # Ensure minimum threshold of 1.0
-                score_sell_threshold=max(score_threshold, 1.0),  # Ensure minimum threshold of 1.0
+                score_buy_threshold=final_buy_threshold,
+                score_sell_threshold=final_sell_threshold,
             )
+            
+            # Dynamically set weights for ALL registered indicators
+            # Weight = value from weights dict if provided, else 1.0 if selected, 0.0 if not
+            all_indicator_ids = etf_indicator_registry.get_all_ids()
+            for indicator_id in all_indicator_ids:
+                weight_attr = f"w_{indicator_id}"
+                is_selected = scanners and indicator_id in scanners
+                weight_value = weights.get(indicator_id, 1.0 if is_selected else 0.0)
+                setattr(criteria, weight_attr, weight_value)
             
             # Log detailed scanner execution information
             self.logger.info("🔍 ETF Scan Analysis - Scanner Configuration Details:")
@@ -448,25 +384,25 @@ class AnalyticsService:
             if scanners and scanner_configs:
                 for scanner_id in scanners:
                     config = scanner_configs.get(scanner_id, {})
-                    # Map scanner IDs to weight keys
-                    weight_key = f"w_{scanner_id}" if scanner_id != 'ema_cross' else "w_ema"
-                    weight = weights.get(weight_key, 0.0)
-                    self.logger.info(f"    • {scanner_id}: config={config}, weight={weight}")
+                    weight_value = weights.get(scanner_id, 1.0)
+                    self.logger.info(f"    • {scanner_id}: config={config}, weight={weight_value}")
             else:
                 self.logger.info("    • Using default configurations")
             
             self.logger.info(f"  🎯 Scan Criteria:")
             self.logger.info(f"    • Column: {criteria.column}")
-            self.logger.info(f"    • EMA: {criteria.ema_short}/{criteria.ema_long} (weight: {criteria.w_ema_cross})")
-            self.logger.info(f"    • MACD: {criteria.macd_fast}/{criteria.macd_slow}/{criteria.macd_sign} (weight: {criteria.w_macd})")
-            self.logger.info(f"    • RSI: {criteria.rsi_window} window, {criteria.rsi_lower}-{criteria.rsi_upper} range (weight: {criteria.w_rsi})")
-            self.logger.info(f"    • Momentum: weight {criteria.w_momentum}")
-            self.logger.info(f"    • Daily Momentum: weight {criteria.w_momentum_daily}")
-            self.logger.info(f"    • Supertrend: weight {criteria.w_supertrend}")
+            # Dynamically log weights for all registered indicators
+            for indicator_id in all_indicator_ids:
+                weight_attr = f"w_{indicator_id}"
+                weight_value = getattr(criteria, weight_attr, 0.0)
+                if weight_value > 0:
+                    indicator = etf_indicator_registry.get(indicator_id)
+                    name = indicator.get_name() if indicator else indicator_id
+                    self.logger.info(f"    • {name}: weight {weight_value}")
             self.logger.info(f"    • Score Thresholds: buy>={criteria.score_buy_threshold}, sell<={criteria.score_sell_threshold}")
             
-            # Perform the scan
-            scan_results = self.etf_scanner.scan(code_to_df, criteria)
+            # Perform the scan with scanner_configs
+            scan_results = self.etf_scanner.scan(code_to_df, criteria, scanner_configs)
             
             # Log scan execution summary
             self.logger.info(f"🔍 Scan completed: {len(scan_results)} results generated")
@@ -501,16 +437,64 @@ class AnalyticsService:
                     self.logger.info(f"  • Components value: {scan_result.components}")
                     self.logger.info(f"  • Indicators type: {type(scan_result.indicators_snapshot)}")
                     self.logger.info(f"  • Indicators value: {scan_result.indicators_snapshot}")
+                    self.logger.info(f"  • Indicator Details: {type(scan_result.indicator_details)}")
+                    self.logger.info(f"  • Indicator Details keys: {scan_result.indicator_details.keys() if hasattr(scan_result, 'indicator_details') else 'N/A'}")
                     self.logger.info(f"  • Reasons count: {len(reasons)}")
                     self.logger.info(f"  • Reasons sample: {reasons[:3] if len(reasons) > 3 else reasons}")
+                
+                # Clean components - they are now dicts with raw, weight, contribution
+                import math
+                clean_components = {}
+                if scan_result.components:
+                    for k, v in scan_result.components.items():
+                        if isinstance(v, dict) and "contribution" in v:
+                            # New format: {"raw": x, "weight": y, "contribution": z}
+                            clean_components[k] = {
+                                "raw": float(v["raw"]) if v.get("raw") is not None and pd.notnull(v["raw"]) else 0.0,
+                                "weight": float(v["weight"]) if v.get("weight") is not None and pd.notnull(v["weight"]) else 0.0,
+                                "contribution": float(v["contribution"]) if v.get("contribution") is not None and pd.notnull(v["contribution"]) else 0.0
+                            }
+                        else:
+                            # Old format: just a number
+                            if v is not None and not math.isnan(v):
+                                clean_components[k] = {"contribution": float(v), "raw": 0.0, "weight": 0.0}
+                
+                clean_indicators = {}
+                if scan_result.indicators_snapshot:
+                    for k, v in scan_result.indicators_snapshot.items():
+                        if v is not None and not math.isnan(v):
+                            clean_indicators[k] = float(v)
+                
+                # Prepare indicator_details (already in correct format from scanner)
+                clean_indicator_details = {}
+                if hasattr(scan_result, 'indicator_details') and scan_result.indicator_details:
+                    for ind_id, ind_data in scan_result.indicator_details.items():
+                        # Clean values dict
+                        clean_values = {}
+                        if isinstance(ind_data.get("values"), dict):
+                            for k, v in ind_data["values"].items():
+                                if v is not None and not math.isnan(v):
+                                    clean_values[k] = float(v)
+                        
+                        clean_indicator_details[ind_id] = {
+                            "name": ind_data.get("name", ind_id),
+                            "id": ind_data.get("id", ind_id),
+                            "values": clean_values,
+                            "raw": float(ind_data.get("raw", 0.0)) if not math.isnan(ind_data.get("raw", 0)) else 0.0,
+                            "weight": float(ind_data.get("weight", 0.0)) if not math.isnan(ind_data.get("weight", 0)) else 0.0,
+                            "contribution": float(ind_data.get("contribution", 0.0)) if not math.isnan(ind_data.get("contribution", 0)) else 0.0,
+                            "calculation_details": ind_data.get("calculation_details", []),
+                            "reasons": ind_data.get("reasons", [])
+                        }
                 
                 formatted_results.append({
                     "code": scan_result.code,
                     "recommendation": recommendation,
                     "score": float(scan_result.score),
                     "reasons": reasons,
-                    "components": dict(scan_result.components) if scan_result.components else {},  # Ensure it's a dict
-                    "indicators_snapshot": dict(scan_result.indicators_snapshot) if scan_result.indicators_snapshot else {},  # Ensure it's a dict
+                    "components": clean_components,
+                    "indicators_snapshot": clean_indicators,
+                    "indicator_details": clean_indicator_details,  # New: grouped per-indicator data
                     "timestamp": scan_result.timestamp.isoformat() if scan_result.timestamp else None,
                     "last_value": scan_result.last_value,
                 })
@@ -558,17 +542,7 @@ class AnalyticsService:
                     "include_keywords": include_keywords,
                     "exclude_keywords": exclude_keywords,
                     "case_sensitive": case_sensitive,
-                    # Actual parameters used in analysis
-                    "actual_parameters": {
-                        "ema_short": ema_short_actual,
-                        "ema_long": ema_long_actual,
-                        "macd_slow": macd_slow_actual,
-                        "macd_fast": macd_fast_actual,
-                        "macd_sign": macd_sign_actual,
-                        "rsi_window": rsi_window_actual,
-                        "rsi_lower": rsi_lower,
-                        "rsi_upper": rsi_upper,
-                    },
+                    "indicators": indicators,
                     # Scanner execution summary
                     "scanner_summary": {
                         "total_scanners": len(scanners) if scanners else 0,
@@ -601,21 +575,10 @@ class AnalyticsService:
                     "include_keywords": include_keywords,
                     "exclude_keywords": exclude_keywords,
                     "case_sensitive": case_sensitive,
-                    # Actual parameters used in analysis
-                    "actual_parameters": {
-                        "ema_short": ema_short_actual,
-                        "ema_long": ema_long_actual,
-                        "macd_slow": macd_slow_actual,
-                        "macd_fast": macd_fast_actual,
-                        "macd_sign": macd_sign_actual,
-                        "rsi_window": rsi_window_actual,
-                        "rsi_lower": rsi_lower,
-                        "rsi_upper": rsi_upper,
-                    },
                     # Scanner execution summary
                     "scanner_summary": {
                         "total_scanners": len(scanners) if scanners else 0,
-                        "active_scanners": [s for s in (scanners or []) if weights.get(f"w_{s}" if s != 'ema_cross' else "w_ema", 0) > 0],
+                        "active_scanners": scanners or [],
                         "buy_count": buy_count,
                         "sell_count": sell_count,
                         "hold_count": hold_count,
