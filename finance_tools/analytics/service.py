@@ -27,6 +27,7 @@ from ..stocks.analysis import (
     StockIndicatorResult,
     StockScanCriteria
 )
+from ..analysis.indicators import registry as unified_indicator_registry
 
 
 class AnalyticsService:
@@ -273,33 +274,34 @@ class AnalyticsService:
             #         cached_result['results'] = cached_result['results']['results']
             #     return cached_result
 
-            # Build indicators dynamically using the registry - NO hardcoded indicator logic
-            from ..etfs.analysis.indicators import registry as etf_indicator_registry
-            
+            # Build indicators dynamically using the unified registry - NO hardcoded indicator logic
+            etf_indicator_map = unified_indicator_registry.get_by_asset_type("etf")
             indicators = {}
-            
+
             if scanners:
                 for scanner_id in scanners:
-                    indicator = etf_indicator_registry.get(scanner_id)
+                    indicator = etf_indicator_map.get(scanner_id) or unified_indicator_registry.get(scanner_id)
                     if indicator is None:
                         self.logger.warning(f"⚠️ Unknown indicator: {scanner_id}")
                         continue
-                    
-                    # Get parameter schema from the indicator
+
+                    if "etf" not in indicator.get_asset_types():
+                        self.logger.warning(f"⚠️ Indicator {scanner_id} does not support ETF asset type")
+                        continue
+
                     schema = indicator.get_parameter_schema()
-                    
+
                     # Build config from scanner_configs, using schema defaults as fallback
                     config = {}
                     if scanner_configs and scanner_id in scanner_configs:
                         user_config = scanner_configs[scanner_id]
                         for param_name, param_schema in schema.items():
-                            config[param_name] = user_config.get(param_name, param_schema.get('default', None))
+                            config[param_name] = user_config.get(param_name, param_schema.get("default", None))
                     else:
-                        # Use schema defaults
                         for param_name, param_schema in schema.items():
-                            if 'default' in param_schema:
-                                config[param_name] = param_schema['default']
-                    
+                            if "default" in param_schema:
+                                config[param_name] = param_schema["default"]
+
                     indicators[scanner_id] = config
 
             # Default weights if none provided, using only selected scanners
@@ -368,9 +370,9 @@ class AnalyticsService:
                 score_sell_threshold=final_sell_threshold,
             )
             
-            # Dynamically set weights for ALL registered indicators
+            # Dynamically set weights for ALL ETF-compatible indicators
             # Weight = value from weights dict if provided, else 1.0 if selected, 0.0 if not
-            all_indicator_ids = etf_indicator_registry.get_all_ids()
+            all_indicator_ids = list(etf_indicator_map.keys())
             for indicator_id in all_indicator_ids:
                 weight_attr = f"w_{indicator_id}"
                 is_selected = scanners and indicator_id in scanners
@@ -396,7 +398,7 @@ class AnalyticsService:
                 weight_attr = f"w_{indicator_id}"
                 weight_value = getattr(criteria, weight_attr, 0.0)
                 if weight_value > 0:
-                    indicator = etf_indicator_registry.get(indicator_id)
+                    indicator = etf_indicator_map.get(indicator_id) or unified_indicator_registry.get(indicator_id)
                     name = indicator.get_name() if indicator else indicator_id
                     self.logger.info(f"    • {name}: weight {weight_value}")
             self.logger.info(f"    • Score Thresholds: buy>={criteria.score_buy_threshold}, sell<={criteria.score_sell_threshold}")
@@ -662,17 +664,20 @@ class AnalyticsService:
             start = datetime.strptime(start_date, "%Y-%m-%d").date() if start_date else None
             end = datetime.strptime(end_date, "%Y-%m-%d").date() if end_date else None
 
-            # Build indicators dynamically using the registry - NO hardcoded indicator logic
-            from ..stocks.analysis.indicators import registry as indicator_registry
-            
+            # Build indicators dynamically using the unified registry - NO hardcoded indicator logic
+            stock_indicator_map = unified_indicator_registry.get_by_asset_type("stock")
             indicators = {}
             keyword_filter = None  # No keyword filtering for stocks yet
             
             if scanners:
                 for scanner_id in scanners:
-                    indicator = indicator_registry.get(scanner_id)
+                    indicator = stock_indicator_map.get(scanner_id) or unified_indicator_registry.get(scanner_id)
                     if indicator is None:
                         self.logger.warning(f"⚠️ Unknown indicator: {scanner_id}")
+                        continue
+
+                    if "stock" not in indicator.get_asset_types():
+                        self.logger.warning(f"⚠️ Indicator {scanner_id} does not support Stock asset type")
                         continue
                     
                     # Get parameter schema from the indicator
@@ -751,8 +756,6 @@ class AnalyticsService:
                 }
 
             # Build scan criteria dynamically - NO hardcoded indicator names
-            from ..stocks.analysis.indicators import registry as indicator_registry
-            
             # Prepare weights: if not provided, default to 1.0 for all selected scanners
             if weights is None:
                 weights = {scanner_id: 1.0 for scanner_id in (scanners or [])}
@@ -774,9 +777,9 @@ class AnalyticsService:
                 score_sell_threshold=final_sell_threshold,
             )
             
-            # Dynamically set weights for ALL registered indicators
+            # Dynamically set weights for ALL stock-compatible indicators
             # Weight = value from weights dict if provided, else 1.0 if selected, 0.0 if not
-            all_indicator_ids = indicator_registry.get_all_ids()
+            all_indicator_ids = list(stock_indicator_map.keys())
             for indicator_id in all_indicator_ids:
                 weight_attr = f"w_{indicator_id}"
                 # Check if this indicator is in the selected scanners list

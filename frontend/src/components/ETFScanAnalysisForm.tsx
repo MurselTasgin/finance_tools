@@ -1,5 +1,5 @@
 // finance_tools/frontend/src/components/ETFScanAnalysisForm.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Card,
@@ -42,6 +42,7 @@ import {
   Info as InfoIcon,
 } from '@mui/icons-material';
 import { CircularProgress } from '@mui/material';
+import { analyticsApi } from '../services/api';
 
 interface SelectedScanner {
   id: string;
@@ -50,53 +51,28 @@ interface SelectedScanner {
   config?: Record<string, any>;
 }
 
+interface IndicatorDefinition {
+  id: string;
+  name: string;
+  description: string;
+  required_columns: string[];
+  parameter_schema: Record<string, any>;
+  capabilities: string[];
+  asset_types: string[];
+}
+
 interface ETFScanAnalysisFormProps {
   onRunAnalysis: (parameters: any) => void;
   running: boolean;
+  initialParameters?: any;
+  onParametersUsed?: () => void;
 }
-
-const AVAILABLE_SCANNERS = [
-  {
-    id: 'ema_cross',
-    name: 'EMA Crossover',
-    description: 'Exponential Moving Average crossover signals',
-    defaultConfig: { short: 20, long: 50 }
-  },
-  {
-    id: 'macd',
-    name: 'MACD',
-    description: 'Moving Average Convergence Divergence',
-    defaultConfig: { slow: 26, fast: 12, signal: 9 }
-  },
-  {
-    id: 'rsi',
-    name: 'RSI',
-    description: 'Relative Strength Index',
-    defaultConfig: { window: 14, lower: 30, upper: 70 }
-  },
-  {
-    id: 'momentum',
-    name: 'Momentum',
-    description: 'Price momentum indicator',
-    defaultConfig: { windows: [30, 60, 90, 180, 360] }
-  },
-  {
-    id: 'daily_momentum',
-    name: 'Daily Momentum',
-    description: 'Daily price momentum indicator',
-    defaultConfig: { windows: [30, 60, 90, 180, 360] }
-  },
-  {
-    id: 'supertrend',
-    name: 'Supertrend',
-    description: 'Supertrend technical indicator',
-    defaultConfig: { hl_factor: 0.05, atr_period: 10, multiplier: 3.0 }
-  },
-];
 
 export const ETFScanAnalysisForm: React.FC<ETFScanAnalysisFormProps> = ({
   onRunAnalysis,
   running,
+  initialParameters,
+  onParametersUsed,
 }) => {
   // Basic parameters
   const [fundType, setFundType] = useState<'all' | 'BYF' | 'YAT' | 'EMK'>('all');
@@ -110,6 +86,9 @@ export const ETFScanAnalysisForm: React.FC<ETFScanAnalysisFormProps> = ({
   const [showAddScanner, setShowAddScanner] = useState(false);
   const [editingScannerIndex, setEditingScannerIndex] = useState<number | null>(null);
   const [editingScanner, setEditingScanner] = useState<SelectedScanner | null>(null);
+  const [availableIndicators, setAvailableIndicators] = useState<IndicatorDefinition[]>([]);
+  const [loadingIndicators, setLoadingIndicators] = useState(false);
+  const [indicatorError, setIndicatorError] = useState<string | null>(null);
 
   // Threshold
   const [scoreThreshold, setScoreThreshold] = useState(0.0);
@@ -128,16 +107,129 @@ export const ETFScanAnalysisForm: React.FC<ETFScanAnalysisFormProps> = ({
     { value: 'number_of_shares', label: 'Number of Shares' },
   ];
 
+  useEffect(() => {
+    loadIndicators();
+  }, []);
+
+  useEffect(() => {
+    if (!initialParameters) {
+      return;
+    }
+
+    // Wait for indicators to load before reconstructing scanners
+    if (initialParameters.scanner_configs && availableIndicators.length === 0) {
+      return;
+    }
+
+    if (initialParameters.fund_type !== undefined) {
+      setFundType(initialParameters.fund_type ?? 'all');
+    }
+
+    if (Array.isArray(initialParameters.specific_codes)) {
+      setSpecificCodes(initialParameters.specific_codes);
+    } else {
+      setSpecificCodes([]);
+    }
+
+    if (initialParameters.start_date) {
+      setStartDate(initialParameters.start_date);
+    }
+    if (initialParameters.end_date) {
+      setEndDate(initialParameters.end_date);
+    }
+    if (initialParameters.column) {
+      setColumn(initialParameters.column);
+    }
+
+    if (Array.isArray(initialParameters.include_keywords)) {
+      setIncludeKeywords(initialParameters.include_keywords);
+    } else {
+      setIncludeKeywords([]);
+    }
+
+    if (Array.isArray(initialParameters.exclude_keywords)) {
+      setExcludeKeywords(initialParameters.exclude_keywords);
+    } else {
+      setExcludeKeywords([]);
+    }
+
+    if (typeof initialParameters.case_sensitive === 'boolean') {
+      setCaseSensitive(initialParameters.case_sensitive);
+    } else {
+      setCaseSensitive(false);
+    }
+
+    if (typeof initialParameters.score_threshold === 'number') {
+      setScoreThreshold(initialParameters.score_threshold);
+    }
+
+    // Reconstruct scanners with configs and weights if provided
+    if (initialParameters.scanner_configs) {
+      const scannerConfigs: Record<string, any> = initialParameters.scanner_configs;
+      const weights: Record<string, number> = initialParameters.weights || {};
+
+      const order = Array.isArray(initialParameters.scanners)
+        ? initialParameters.scanners
+        : Object.keys(scannerConfigs);
+
+      const reconstructedScanners: SelectedScanner[] = [];
+      order.forEach((scannerId: string) => {
+        const indicator = availableIndicators.find((indicatorDef) => indicatorDef.id === scannerId);
+        if (!indicator) {
+          console.warn(`Could not find ETF indicator with id: ${scannerId}`);
+          return;
+        }
+
+        reconstructedScanners.push({
+          id: scannerId,
+          name: indicator.name,
+          weight: typeof weights[scannerId] === 'number' ? weights[scannerId] : 1.0,
+          config: { ...scannerConfigs[scannerId] },
+        });
+      });
+
+      setSelectedScanners(reconstructedScanners);
+    }
+
+    onParametersUsed?.();
+  }, [initialParameters, availableIndicators, onParametersUsed]);
+
+  const loadIndicators = async () => {
+    try {
+      setLoadingIndicators(true);
+      setIndicatorError(null);
+      const response = await analyticsApi.getIndicators('etf');
+      setAvailableIndicators(response.indicators || []);
+    } catch (err) {
+      console.error('Failed to load ETF indicators:', err);
+      setIndicatorError('Failed to load ETF indicators');
+    } finally {
+      setLoadingIndicators(false);
+    }
+  };
+
   // Scanner management functions
   const addScanner = (scannerId: string) => {
-    const scannerDef = AVAILABLE_SCANNERS.find(s => s.id === scannerId);
-    if (!scannerDef) return;
+    const indicator = availableIndicators.find(s => s.id === scannerId);
+    if (!indicator) return;
+
+    if (selectedScanners.some(s => s.id === scannerId)) {
+      setShowAddScanner(false);
+      return;
+    }
+
+    const defaultConfig: Record<string, any> = {};
+    Object.entries(indicator.parameter_schema || {}).forEach(([key, schema]: [string, any]) => {
+      if (schema && schema.default !== undefined) {
+        defaultConfig[key] = schema.default;
+      }
+    });
 
     const newScanner: SelectedScanner = {
       id: scannerId,
-      name: scannerDef.name,
+      name: indicator.name,
       weight: 1.0,
-      config: { ...scannerDef.defaultConfig }
+      config: defaultConfig,
     };
 
     setSelectedScanners([...selectedScanners, newScanner]);
@@ -146,12 +238,6 @@ export const ETFScanAnalysisForm: React.FC<ETFScanAnalysisFormProps> = ({
 
   const removeScanner = (index: number) => {
     setSelectedScanners(selectedScanners.filter((_, i) => i !== index));
-  };
-
-  const updateScannerWeight = (index: number, weight: number) => {
-    const updated = [...selectedScanners];
-    updated[index].weight = weight;
-    setSelectedScanners(updated);
   };
 
   const startEditScanner = (index: number) => {
@@ -215,7 +301,7 @@ export const ETFScanAnalysisForm: React.FC<ETFScanAnalysisFormProps> = ({
     const weights: Record<string, number> = {};
 
     selectedScanners.forEach(scanner => {
-      scannerConfigs[scanner.id] = scanner.config;
+      scannerConfigs[scanner.id] = scanner.config ?? {};
       weights[scanner.id] = scanner.weight;
     });
 
@@ -238,6 +324,127 @@ export const ETFScanAnalysisForm: React.FC<ETFScanAnalysisFormProps> = ({
   };
 
   const totalWeight = selectedScanners.reduce((sum, s) => sum + s.weight, 0);
+
+  const renderConfigForm = (scanner: SelectedScanner) => {
+    const indicator = availableIndicators.find(i => i.id === scanner.id);
+    if (!indicator) {
+      return (
+        <Typography variant="body2" color="textSecondary">
+          Indicator metadata unavailable.
+        </Typography>
+      );
+    }
+
+    const schemaEntries = Object.entries(indicator.parameter_schema || {});
+    if (schemaEntries.length === 0) {
+      return (
+        <Typography variant="body2" color="textSecondary">
+          This indicator does not require configuration.
+        </Typography>
+      );
+    }
+
+    return (
+      <Stack spacing={2} sx={{ mt: 2 }}>
+        {schemaEntries.map(([key, schema]: [string, any]) => {
+          const value = editingScanner?.config?.[key] ?? schema.default ?? '';
+
+          if (schema.type === 'integer') {
+            return (
+              <TextField
+                key={key}
+                label={schema.description || key}
+                type="number"
+                value={value}
+                onChange={(e) => {
+                  const parsed = parseInt(e.target.value, 10);
+                  setEditingScanner(prev => prev ? {
+                    ...prev,
+                    config: {
+                      ...prev.config,
+                      [key]: Number.isNaN(parsed) ? schema.default : parsed,
+                    },
+                  } : prev);
+                }}
+                fullWidth
+                inputProps={{ min: schema.min, max: schema.max }}
+              />
+            );
+          }
+
+          if (schema.type === 'float') {
+            return (
+              <TextField
+                key={key}
+                label={schema.description || key}
+                type="number"
+                value={value}
+                onChange={(e) => {
+                  const parsed = parseFloat(e.target.value);
+                  setEditingScanner(prev => prev ? {
+                    ...prev,
+                    config: {
+                      ...prev.config,
+                      [key]: Number.isNaN(parsed) ? schema.default : parsed,
+                    },
+                  } : prev);
+                }}
+                fullWidth
+                inputProps={{ min: schema.min, max: schema.max, step: schema.step || 0.1 }}
+              />
+            );
+          }
+
+          if (schema.type === 'array' && schema.items?.type === 'integer') {
+            return (
+              <TextField
+                key={key}
+                label={schema.description || key}
+                value={JSON.stringify(value)}
+                onChange={(e) => {
+                  try {
+                    const parsed = JSON.parse(e.target.value);
+                    if (Array.isArray(parsed)) {
+                      setEditingScanner(prev => prev ? {
+                        ...prev,
+                        config: {
+                          ...prev.config,
+                          [key]: parsed,
+                        },
+                      } : prev);
+                    }
+                  } catch {
+                    // Ignore invalid JSON input
+                  }
+                }}
+                fullWidth
+                helperText="Enter as JSON array, e.g., [30, 60, 90]"
+              />
+            );
+          }
+
+          return (
+            <TextField
+              key={key}
+              label={schema.description || key}
+              value={value}
+              onChange={(e) => {
+                const newValue = e.target.value;
+                setEditingScanner(prev => prev ? {
+                  ...prev,
+                  config: {
+                    ...prev.config,
+                    [key]: newValue,
+                  },
+                } : prev);
+              }}
+              fullWidth
+            />
+          );
+        })}
+      </Stack>
+    );
+  };
 
   return (
     <Box>
@@ -373,6 +580,18 @@ export const ETFScanAnalysisForm: React.FC<ETFScanAnalysisFormProps> = ({
                 Select one or more scanners. Each scanner will be weighted and combined to produce a final score for each fund.
               </Alert>
 
+              {indicatorError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {indicatorError}
+                </Alert>
+              )}
+
+              {loadingIndicators && (
+                <Box display="flex" justifyContent="center" py={1}>
+                  <CircularProgress size={20} />
+                </Box>
+              )}
+
               {/* Scanners Table */}
               {selectedScanners.length > 0 && (
                 <>
@@ -390,35 +609,38 @@ export const ETFScanAnalysisForm: React.FC<ETFScanAnalysisFormProps> = ({
                         </TableRow>
                       </TableHead>
                       <TableBody>
-                        {selectedScanners.map((scanner, index) => (
-                          <TableRow key={index}>
-                            <TableCell>{scanner.name}</TableCell>
-                            <TableCell align="right">{scanner.weight.toFixed(2)}</TableCell>
-                            <TableCell align="right">
-                              {((scanner.weight / totalWeight) * 100).toFixed(1)}%
-                            </TableCell>
-                            <TableCell align="center">
-                              <Tooltip title="Edit Scanner">
-                                <IconButton
-                                  size="small"
-                                  onClick={() => startEditScanner(index)}
-                                  color="primary"
-                                >
-                                  <EditIcon />
-                                </IconButton>
-                              </Tooltip>
-                              <Tooltip title="Remove Scanner">
-                                <IconButton
-                                  size="small"
-                                  onClick={() => removeScanner(index)}
-                                  color="error"
-                                >
-                                  <DeleteIcon />
-                                </IconButton>
-                              </Tooltip>
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {selectedScanners.map((scanner, index) => {
+                          const weightPercentage = totalWeight > 0 ? (scanner.weight / totalWeight) * 100 : 0;
+                          return (
+                            <TableRow key={index}>
+                              <TableCell>{scanner.name}</TableCell>
+                              <TableCell align="right">{scanner.weight.toFixed(2)}</TableCell>
+                              <TableCell align="right">
+                                {weightPercentage.toFixed(1)}%
+                              </TableCell>
+                              <TableCell align="center">
+                                <Tooltip title="Edit Scanner">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => startEditScanner(index)}
+                                    color="primary"
+                                  >
+                                    <EditIcon />
+                                  </IconButton>
+                                </Tooltip>
+                                <Tooltip title="Remove Scanner">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => removeScanner(index)}
+                                    color="error"
+                                  >
+                                    <DeleteIcon />
+                                  </IconButton>
+                                </Tooltip>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
                       </TableBody>
                     </Table>
                   </TableContainer>
@@ -593,11 +815,27 @@ export const ETFScanAnalysisForm: React.FC<ETFScanAnalysisFormProps> = ({
         <DialogTitle>Select Scanner to Add</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 2 }}>
-            {AVAILABLE_SCANNERS.map(scanner => (
+            {loadingIndicators && (
+              <Box display="flex" justifyContent="center" py={2}>
+                <CircularProgress size={24} />
+              </Box>
+            )}
+
+            {indicatorError && (
+              <Alert severity="error">{indicatorError}</Alert>
+            )}
+
+            {!loadingIndicators && !indicatorError && availableIndicators.length === 0 && (
+              <Typography variant="body2" color="textSecondary">
+                No indicators available for ETF scans.
+              </Typography>
+            )}
+
+            {!loadingIndicators && !indicatorError && availableIndicators.map(indicator => (
               <Paper
-                key={scanner.id}
+                key={indicator.id}
                 onClick={() => {
-                  addScanner(scanner.id);
+                  addScanner(indicator.id);
                   setShowAddScanner(false);
                 }}
                 sx={{
@@ -607,9 +845,9 @@ export const ETFScanAnalysisForm: React.FC<ETFScanAnalysisFormProps> = ({
                   transition: 'all 0.2s',
                 }}
               >
-                <Typography variant="subtitle1">{scanner.name}</Typography>
+                <Typography variant="subtitle1">{indicator.name}</Typography>
                 <Typography variant="body2" color="textSecondary">
-                  {scanner.description}
+                  {indicator.description}
                 </Typography>
               </Paper>
             ))}
@@ -634,253 +872,15 @@ export const ETFScanAnalysisForm: React.FC<ETFScanAnalysisFormProps> = ({
                   inputProps={{ step: 0.1, min: 0 }}
                   value={editingScanner.weight}
                   onChange={(e) =>
-                    setEditingScanner({
-                      ...editingScanner,
+                    setEditingScanner(prev => prev ? {
+                      ...prev,
                       weight: parseFloat(e.target.value) || 0,
-                    })
+                    } : prev)
                   }
                 />
               </Box>
 
-              {editingScanner.id === 'ema_cross' && editingScanner.config && (
-                <Box>
-                  <Typography variant="subtitle2" gutterBottom>
-                    EMA Periods
-                  </Typography>
-                  <Grid container spacing={2}>
-                    <Grid item xs={6}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Short"
-                        type="number"
-                        value={editingScanner.config.short}
-                        onChange={(e) =>
-                          setEditingScanner({
-                            ...editingScanner,
-                            config: {
-                              ...editingScanner.config,
-                              short: parseInt(e.target.value) || 20,
-                            },
-                          })
-                        }
-                      />
-                    </Grid>
-                    <Grid item xs={6}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Long"
-                        type="number"
-                        value={editingScanner.config.long}
-                        onChange={(e) =>
-                          setEditingScanner({
-                            ...editingScanner,
-                            config: {
-                              ...editingScanner.config,
-                              long: parseInt(e.target.value) || 50,
-                            },
-                          })
-                        }
-                      />
-                    </Grid>
-                  </Grid>
-                </Box>
-              )}
-
-              {editingScanner.id === 'macd' && editingScanner.config && (
-                <Box>
-                  <Typography variant="subtitle2" gutterBottom>
-                    MACD Parameters
-                  </Typography>
-                  <Grid container spacing={2}>
-                    <Grid item xs={4}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Slow"
-                        type="number"
-                        value={editingScanner.config.slow}
-                        onChange={(e) =>
-                          setEditingScanner({
-                            ...editingScanner,
-                            config: {
-                              ...editingScanner.config,
-                              slow: parseInt(e.target.value) || 26,
-                            },
-                          })
-                        }
-                      />
-                    </Grid>
-                    <Grid item xs={4}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Fast"
-                        type="number"
-                        value={editingScanner.config.fast}
-                        onChange={(e) =>
-                          setEditingScanner({
-                            ...editingScanner,
-                            config: {
-                              ...editingScanner.config,
-                              fast: parseInt(e.target.value) || 12,
-                            },
-                          })
-                        }
-                      />
-                    </Grid>
-                    <Grid item xs={4}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Signal"
-                        type="number"
-                        value={editingScanner.config.signal}
-                        onChange={(e) =>
-                          setEditingScanner({
-                            ...editingScanner,
-                            config: {
-                              ...editingScanner.config,
-                              signal: parseInt(e.target.value) || 9,
-                            },
-                          })
-                        }
-                      />
-                    </Grid>
-                  </Grid>
-                </Box>
-              )}
-
-              {editingScanner.id === 'rsi' && editingScanner.config && (
-                <Box>
-                  <Typography variant="subtitle2" gutterBottom>
-                    RSI Parameters
-                  </Typography>
-                  <Grid container spacing={2}>
-                    <Grid item xs={12}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Window"
-                        type="number"
-                        value={editingScanner.config.window}
-                        onChange={(e) =>
-                          setEditingScanner({
-                            ...editingScanner,
-                            config: {
-                              ...editingScanner.config,
-                              window: parseInt(e.target.value) || 14,
-                            },
-                          })
-                        }
-                      />
-                    </Grid>
-                    <Grid item xs={6}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Lower Threshold"
-                        type="number"
-                        value={editingScanner.config.lower}
-                        onChange={(e) =>
-                          setEditingScanner({
-                            ...editingScanner,
-                            config: {
-                              ...editingScanner.config,
-                              lower: parseFloat(e.target.value) || 30,
-                            },
-                          })
-                        }
-                      />
-                    </Grid>
-                    <Grid item xs={6}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Upper Threshold"
-                        type="number"
-                        value={editingScanner.config.upper}
-                        onChange={(e) =>
-                          setEditingScanner({
-                            ...editingScanner,
-                            config: {
-                              ...editingScanner.config,
-                              upper: parseFloat(e.target.value) || 70,
-                            },
-                          })
-                        }
-                      />
-                    </Grid>
-                  </Grid>
-                </Box>
-              )}
-
-              {editingScanner.id === 'supertrend' && editingScanner.config && (
-                <Box>
-                  <Typography variant="subtitle2" gutterBottom>
-                    Supertrend Parameters
-                  </Typography>
-                  <Grid container spacing={2}>
-                    <Grid item xs={6}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="HL Factor"
-                        type="number"
-                        inputProps={{ step: 0.01 }}
-                        value={editingScanner.config.hl_factor}
-                        onChange={(e) =>
-                          setEditingScanner({
-                            ...editingScanner,
-                            config: {
-                              ...editingScanner.config,
-                              hl_factor: parseFloat(e.target.value) || 0.05,
-                            },
-                          })
-                        }
-                      />
-                    </Grid>
-                    <Grid item xs={6}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="ATR Period"
-                        type="number"
-                        value={editingScanner.config.atr_period}
-                        onChange={(e) =>
-                          setEditingScanner({
-                            ...editingScanner,
-                            config: {
-                              ...editingScanner.config,
-                              atr_period: parseInt(e.target.value) || 10,
-                            },
-                          })
-                        }
-                      />
-                    </Grid>
-                    <Grid item xs={12}>
-                      <TextField
-                        fullWidth
-                        size="small"
-                        label="Multiplier"
-                        type="number"
-                        inputProps={{ step: 0.1 }}
-                        value={editingScanner.config.multiplier}
-                        onChange={(e) =>
-                          setEditingScanner({
-                            ...editingScanner,
-                            config: {
-                              ...editingScanner.config,
-                              multiplier: parseFloat(e.target.value) || 3.0,
-                            },
-                          })
-                        }
-                      />
-                    </Grid>
-                  </Grid>
-                </Box>
-              )}
+              {renderConfigForm(editingScanner)}
             </Stack>
           )}
         </DialogContent>

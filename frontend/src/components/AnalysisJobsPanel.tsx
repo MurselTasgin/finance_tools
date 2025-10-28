@@ -164,7 +164,10 @@ export const AnalysisJobsPanel: React.FC<AnalysisJobsPanelProps> = ({ onRerunReq
       if (!selectedJobForRerun) return Promise.reject('No job selected');
       
       // If onRerunRequest is provided, use it to navigate to form with parameters
-      if (onRerunRequest && selectedJobForRerun.analysis_type === 'stock_scan') {
+      if (
+        onRerunRequest &&
+        (selectedJobForRerun.analysis_type === 'stock_scan' || selectedJobForRerun.analysis_type === 'etf_scan')
+      ) {
         console.log('Rerun mutation - passing parameters:', {
           analysisType: selectedJobForRerun.analysis_type,
           parameters: selectedJobForRerun.parameters,
@@ -188,7 +191,11 @@ export const AnalysisJobsPanel: React.FC<AnalysisJobsPanelProps> = ({ onRerunReq
     },
     {
       onSuccess: () => {
-        if (!selectedJobForRerun || selectedJobForRerun.analysis_type === 'stock_scan') {
+        if (
+          !selectedJobForRerun ||
+          selectedJobForRerun.analysis_type === 'stock_scan' ||
+          selectedJobForRerun.analysis_type === 'etf_scan'
+        ) {
           // For stock_scan, navigation is handled above
           return;
         }
@@ -998,8 +1005,11 @@ export const AnalysisJobsPanel: React.FC<AnalysisJobsPanelProps> = ({ onRerunReq
               }}
               onRerun={async (parameters) => {
                 try {
-                  // If onRerunRequest is provided for stock_scan, use it to navigate to form
-                  if (onRerunRequest && selectedJobResults.analysis_type === 'stock_scan') {
+                  // If onRerunRequest is provided, use it to navigate to form
+                  if (
+                    onRerunRequest &&
+                    (selectedJobResults.analysis_type === 'stock_scan' || selectedJobResults.analysis_type === 'etf_scan')
+                  ) {
                     onRerunRequest(selectedJobResults.analysis_type, parameters);
                     setResultsDialogOpen(false);
                     return;

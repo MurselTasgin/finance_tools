@@ -10,7 +10,7 @@ from ...logging import get_logger
 from .types import IndicatorRequest, IndicatorResult
 from .retriever import EtfDataRetriever
 from .filters import TitleFilter
-from .indicators import registry, IndicatorConfig
+from ...analysis.indicators import registry as unified_indicator_registry, IndicatorConfig
 
 
 @dataclass
@@ -60,9 +60,13 @@ class EtfAnalyzer:
         
         # Process each indicator configuration
         for indicator_name, params in indicators.items():
-            indicator = registry.get(indicator_name)
+            indicator = unified_indicator_registry.get(indicator_name)
             if indicator is None:
                 self.logger.warning(f"⚠️ Unknown indicator: {indicator_name}")
+                continue
+
+            if "etf" not in indicator.get_asset_types():
+                self.logger.warning(f"⚠️ Indicator {indicator_name} does not support ETF asset type")
                 continue
             
             # Create indicator config
@@ -78,5 +82,4 @@ class EtfAnalyzer:
                 self.logger.error(f"Error calculating {indicator_name}: {e}")
         
         return result
-
 

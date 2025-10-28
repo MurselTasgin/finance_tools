@@ -1,5 +1,5 @@
 // finance_tools/frontend/src/components/ETFTechnicalAnalysisForm.tsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Card,
@@ -20,7 +20,7 @@ import {
   FormControlLabel,
   Switch,
   IconButton,
-  Tooltip,
+  CircularProgress,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -28,35 +28,21 @@ import {
   TrendingUp as TrendingUpIcon,
   Settings as SettingsIcon,
 } from '@mui/icons-material';
+import { analyticsApi } from '../services/api';
 
 interface ETFTechnicalAnalysisFormProps {
   onRunAnalysis: (parameters: any) => void;
   running: boolean;
 }
 
-interface IndicatorConfig {
-  ema: {
-    windows: number[];
-  };
-  rsi: {
-    window: number;
-  };
-  macd: {
-    window_slow: number;
-    window_fast: number;
-    window_sign: number;
-  };
-  momentum: {
-    windows: number[];
-  };
-  daily_momentum: {
-    windows: number[];
-  };
-  supertrend: {
-    hl_factor: number;
-    atr_period: number;
-    multiplier: number;
-  };
+interface IndicatorDefinition {
+  id: string;
+  name: string;
+  description: string;
+  required_columns: string[];
+  parameter_schema: Record<string, any>;
+  capabilities: string[];
+  asset_types: string[];
 }
 
 export const ETFTechnicalAnalysisForm: React.FC<ETFTechnicalAnalysisFormProps> = ({
@@ -76,18 +62,14 @@ export const ETFTechnicalAnalysisForm: React.FC<ETFTechnicalAnalysisFormProps> =
   const [caseSensitive, setCaseSensitive] = useState(false);
 
   // Indicator configurations
-  const [indicators, setIndicators] = useState<IndicatorConfig>({
-    ema: { windows: [20, 50] },
-    rsi: { window: 14 },
-    macd: { window_slow: 26, window_fast: 12, window_sign: 9 },
-    momentum: { windows: [30, 60, 90, 180, 360] },
-    daily_momentum: { windows: [30, 60, 90, 180, 360] },
-    supertrend: { hl_factor: 0.05, atr_period: 10, multiplier: 3.0 },
-  });
+  const [availableIndicators, setAvailableIndicators] = useState<IndicatorDefinition[]>([]);
+  const [indicatorConfigs, setIndicatorConfigs] = useState<Record<string, any>>({});
+  const [enabledIndicators, setEnabledIndicators] = useState<Record<string, boolean>>({});
+  const [loadingIndicators, setLoadingIndicators] = useState(false);
+  const [indicatorError, setIndicatorError] = useState<string | null>(null);
 
   // UI state
   const [newKeyword, setNewKeyword] = useState('');
-  const [activeTab, setActiveTab] = useState(0);
 
   const availableColumns = [
     { value: 'price', label: 'Price' },
@@ -96,10 +78,172 @@ export const ETFTechnicalAnalysisForm: React.FC<ETFTechnicalAnalysisFormProps> =
     { value: 'number_of_shares', label: 'Number of Shares' },
   ];
 
+  useEffect(() => {
+    loadIndicators();
+  }, []);
+
+  const loadIndicators = async () => {
+    try {
+      setLoadingIndicators(true);
+      setIndicatorError(null);
+      const response = await analyticsApi.getIndicators('etf');
+      const indicators = response.indicators || [];
+      setAvailableIndicators(indicators);
+
+      const defaults: Record<string, any> = {};
+      const enabled: Record<string, boolean> = {};
+
+      indicators.forEach((indicator: IndicatorDefinition) => {
+        enabled[indicator.id] = true;
+        const config: Record<string, any> = {};
+        Object.entries(indicator.parameter_schema || {}).forEach(([key, schema]: [string, any]) => {
+          if (schema && schema.default !== undefined) {
+            config[key] = schema.default;
+          }
+        });
+        defaults[indicator.id] = config;
+      });
+
+      setIndicatorConfigs(defaults);
+      setEnabledIndicators(enabled);
+    } catch (err) {
+      console.error('Failed to load ETF indicators:', err);
+      setIndicatorError('Failed to load ETF indicators');
+    } finally {
+      setLoadingIndicators(false);
+    }
+  };
+
   const addCode = () => {
     if (codes.length < 10) {
       setCodes([...codes, '']);
     }
+  };
+
+  const updateIndicatorParam = (indicatorId: string, param: string, value: any) => {
+    setIndicatorConfigs(prev => ({
+      ...prev,
+      [indicatorId]: {
+        ...(prev[indicatorId] || {}),
+        [param]: value,
+      },
+    }));
+  };
+
+  const toggleIndicator = (indicatorId: string, enabled: boolean) => {
+    setEnabledIndicators(prev => ({
+      ...prev,
+      [indicatorId]: enabled,
+    }));
+  };
+
+  const renderIndicatorFields = (indicator: IndicatorDefinition) => {
+    const schemaEntries = Object.entries(indicator.parameter_schema || {});
+    const isEnabled = enabledIndicators[indicator.id] ?? true;
+    const currentConfig = indicatorConfigs[indicator.id] || {};
+
+    if (schemaEntries.length === 0) {
+      return (
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+          No configurable parameters.
+        </Typography>
+      );
+    }
+
+    return (
+      <Stack spacing={2} sx={{ mt: 2 }}>
+        {schemaEntries.map(([key, schema]: [string, any]) => {
+          const value = currentConfig[key] ?? schema.default ?? '';
+
+          if (schema.type === 'integer') {
+            return (
+              <TextField
+                key={key}
+                label={schema.description || key}
+                type="number"
+                value={value}
+                onChange={(e) => {
+                  const parsed = parseInt(e.target.value, 10);
+                  updateIndicatorParam(indicator.id, key, Number.isNaN(parsed) ? schema.default : parsed);
+                }}
+                fullWidth
+                inputProps={{ min: schema.min, max: schema.max }}
+                disabled={!isEnabled}
+              />
+            );
+          }
+
+          if (schema.type === 'float') {
+            return (
+              <TextField
+                key={key}
+                label={schema.description || key}
+                type="number"
+                value={value}
+                onChange={(e) => {
+                  const parsed = parseFloat(e.target.value);
+                  updateIndicatorParam(indicator.id, key, Number.isNaN(parsed) ? schema.default : parsed);
+                }}
+                fullWidth
+                inputProps={{ min: schema.min, max: schema.max, step: schema.step || 0.1 }}
+                disabled={!isEnabled}
+              />
+            );
+          }
+
+          if (schema.type === 'array') {
+            const textValue = Array.isArray(value) ? JSON.stringify(value) : JSON.stringify(schema.default || []);
+            return (
+              <TextField
+                key={key}
+                label={schema.description || key}
+                value={textValue}
+                onChange={(e) => {
+                  try {
+                    const parsed = JSON.parse(e.target.value);
+                    if (Array.isArray(parsed)) {
+                      updateIndicatorParam(indicator.id, key, parsed);
+                    }
+                  } catch {
+                    // Ignore invalid JSON
+                  }
+                }}
+                fullWidth
+                helperText="Enter as JSON array, e.g., [20, 50]"
+                disabled={!isEnabled}
+              />
+            );
+          }
+
+          if (schema.type === 'boolean') {
+            return (
+              <FormControlLabel
+                key={key}
+                control={
+                  <Switch
+                    checked={Boolean(value)}
+                    onChange={(e) => updateIndicatorParam(indicator.id, key, e.target.checked)}
+                    disabled={!isEnabled}
+                  />
+                }
+                label={schema.description || key}
+              />
+            );
+          }
+
+          return (
+            <TextField
+              key={key}
+              label={schema.description || key}
+              value={value}
+              onChange={(e) => updateIndicatorParam(indicator.id, key, e.target.value)}
+              fullWidth
+              disabled={!isEnabled}
+            />
+          );
+        })}
+      </Stack>
+    );
   };
 
   const updateCode = (index: number, value: string) => {
@@ -133,46 +277,18 @@ export const ETFTechnicalAnalysisForm: React.FC<ETFTechnicalAnalysisFormProps> =
     }
   };
 
-  const updateIndicator = (indicatorType: keyof IndicatorConfig, field: string, value: any) => {
-    setIndicators(prev => ({
-      ...prev,
-      [indicatorType]: {
-        ...prev[indicatorType],
-        [field]: value,
-      },
-    }));
-  };
-
-  const updateArrayField = (indicatorType: keyof IndicatorConfig, field: string, index: number, value: any) => {
-    setIndicators(prev => ({
-      ...prev,
-      [indicatorType]: {
-        ...prev[indicatorType],
-        [field]: (prev[indicatorType] as any)[field].map((item: any, i: number) =>
-          i === index ? value : item
-        ),
-      },
-    }));
-  };
-
-  const addArrayItem = (indicatorType: keyof IndicatorConfig, field: string) => {
-    setIndicators(prev => ({
-      ...prev,
-      [indicatorType]: {
-        ...prev[indicatorType],
-        [field]: [...(prev[indicatorType] as any)[field], 0],
-      },
-    }));
-  };
-
 
   const handleSubmit = () => {
+    const activeIndicators = Object.fromEntries(
+      Object.entries(indicatorConfigs).filter(([indicatorId]) => enabledIndicators[indicatorId])
+    );
+
     const parameters = {
       codes: codes.filter(code => code.trim() !== ''),
       start_date: startDate,
       end_date: endDate,
       column,
-      indicators,
+      indicators: activeIndicators,
       include_keywords: includeKeywords.length > 0 ? includeKeywords : undefined,
       exclude_keywords: excludeKeywords.length > 0 ? excludeKeywords : undefined,
       case_sensitive: caseSensitive,
@@ -391,219 +507,66 @@ export const ETFTechnicalAnalysisForm: React.FC<ETFTechnicalAnalysisFormProps> =
                 Technical Indicators Configuration
               </Typography>
 
-              <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
-                <Button
-                  variant={activeTab === 0 ? 'contained' : 'text'}
-                  onClick={() => setActiveTab(0)}
-                >
-                  Moving Averages
-                </Button>
-                <Button
-                  variant={activeTab === 1 ? 'contained' : 'text'}
-                  onClick={() => setActiveTab(1)}
-                  sx={{ ml: 1 }}
-                >
-                  Momentum
-                </Button>
-                <Button
-                  variant={activeTab === 2 ? 'contained' : 'text'}
-                  onClick={() => setActiveTab(2)}
-                  sx={{ ml: 1 }}
-                >
-                  Trend
-                </Button>
-              </Box>
-
-              {/* Moving Averages Tab */}
-              {activeTab === 0 && (
-                <Box mt={2}>
-                  <Grid container spacing={3}>
-                    <Grid item xs={12} md={4}>
-                      <Typography variant="subtitle1" gutterBottom>
-                        EMA (Exponential Moving Average)
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" gutterBottom>
-                        Windows: {indicators.ema.windows.join(', ')}
-                      </Typography>
-                      <Stack spacing={1}>
-                        {indicators.ema.windows.map((window, index) => (
-                          <TextField
-                            key={index}
-                            size="small"
-                            type="number"
-                            label={`EMA Window ${index + 1}`}
-                            value={window}
-                            onChange={(e) => updateArrayField('ema', 'windows', index, parseInt(e.target.value))}
-                            inputProps={{ min: 1, max: 200 }}
-                          />
-                        ))}
-                        <Button
-                          size="small"
-                          startIcon={<AddIcon />}
-                          onClick={() => addArrayItem('ema', 'windows')}
-                        >
-                          Add EMA Window
-                        </Button>
-                      </Stack>
-                    </Grid>
-
-                    <Grid item xs={12} md={4}>
-                      <Typography variant="subtitle1" gutterBottom>
-                        RSI (Relative Strength Index)
-                      </Typography>
-                      <TextField
-                        fullWidth
-                        type="number"
-                        label="RSI Window"
-                        value={indicators.rsi.window}
-                        onChange={(e) => updateIndicator('rsi', 'window', parseInt(e.target.value))}
-                        inputProps={{ min: 2, max: 100 }}
-                        helperText="Typical range: 14"
-                      />
-                    </Grid>
-
-                    <Grid item xs={12} md={4}>
-                      <Typography variant="subtitle1" gutterBottom>
-                        MACD
-                      </Typography>
-                      <Stack spacing={1}>
-                        <TextField
-                          size="small"
-                          type="number"
-                          label="Slow EMA"
-                          value={indicators.macd.window_slow}
-                          onChange={(e) => updateIndicator('macd', 'window_slow', parseInt(e.target.value))}
-                          inputProps={{ min: 1, max: 100 }}
-                        />
-                        <TextField
-                          size="small"
-                          type="number"
-                          label="Fast EMA"
-                          value={indicators.macd.window_fast}
-                          onChange={(e) => updateIndicator('macd', 'window_fast', parseInt(e.target.value))}
-                          inputProps={{ min: 1, max: 50 }}
-                        />
-                        <TextField
-                          size="small"
-                          type="number"
-                          label="Signal Line"
-                          value={indicators.macd.window_sign}
-                          onChange={(e) => updateIndicator('macd', 'window_sign', parseInt(e.target.value))}
-                          inputProps={{ min: 1, max: 50 }}
-                        />
-                      </Stack>
-                    </Grid>
-                  </Grid>
-                </Box>
+              {indicatorError && (
+                <Alert severity="error" sx={{ mb: 2 }}>
+                  {indicatorError}
+                </Alert>
               )}
 
-              {/* Momentum Tab */}
-              {activeTab === 1 && (
-                <Box mt={2}>
-                  <Grid container spacing={3}>
-                    <Grid item xs={12} md={6}>
-                      <Typography variant="subtitle1" gutterBottom>
-                        Momentum Indicators
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" gutterBottom>
-                        Windows: {indicators.momentum.windows.join(', ')}
-                      </Typography>
-                      <Stack spacing={1}>
-                        {indicators.momentum.windows.map((window, index) => (
-                          <TextField
-                            key={index}
-                            size="small"
-                            type="number"
-                            label={`Momentum Window ${index + 1}`}
-                            value={window}
-                            onChange={(e) => updateArrayField('momentum', 'windows', index, parseInt(e.target.value))}
-                            inputProps={{ min: 1, max: 1000 }}
-                          />
-                        ))}
-                        <Button
-                          size="small"
-                          startIcon={<AddIcon />}
-                          onClick={() => addArrayItem('momentum', 'windows')}
-                        >
-                          Add Momentum Window
-                        </Button>
-                      </Stack>
-                    </Grid>
-
-                    <Grid item xs={12} md={6}>
-                      <Typography variant="subtitle1" gutterBottom>
-                        Daily Momentum
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary" gutterBottom>
-                        Windows: {indicators.daily_momentum.windows.join(', ')}
-                      </Typography>
-                      <Stack spacing={1}>
-                        {indicators.daily_momentum.windows.map((window, index) => (
-                          <TextField
-                            key={index}
-                            size="small"
-                            type="number"
-                            label={`Daily Momentum Window ${index + 1}`}
-                            value={window}
-                            onChange={(e) => updateArrayField('daily_momentum', 'windows', index, parseInt(e.target.value))}
-                            inputProps={{ min: 1, max: 1000 }}
-                          />
-                        ))}
-                        <Button
-                          size="small"
-                          startIcon={<AddIcon />}
-                          onClick={() => addArrayItem('daily_momentum', 'windows')}
-                        >
-                          Add Daily Momentum Window
-                        </Button>
-                      </Stack>
-                    </Grid>
-                  </Grid>
+              {loadingIndicators ? (
+                <Box display="flex" justifyContent="center" py={4}>
+                  <CircularProgress />
                 </Box>
-              )}
+              ) : (
+                <Stack spacing={3}>
+                  {availableIndicators.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">
+                      No indicators available.
+                    </Typography>
+                  ) : (
+                    availableIndicators.map((indicator) => (
+                      <Box
+                        key={indicator.id}
+                        p={2}
+                        sx={{
+                          border: '1px solid',
+                          borderColor: 'divider',
+                          borderRadius: 1,
+                        }}
+                      >
+                        <Stack
+                          direction={{ xs: 'column', sm: 'row' }}
+                          spacing={1}
+                          justifyContent="space-between"
+                          alignItems={{ xs: 'flex-start', sm: 'center' }}
+                        >
+                          <Box>
+                            <Typography variant="subtitle1">{indicator.name}</Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              {indicator.description}
+                            </Typography>
+                            {indicator.required_columns?.length > 0 && (
+                              <Typography variant="caption" color="text.secondary">
+                                Requires: {indicator.required_columns.join(', ')}
+                              </Typography>
+                            )}
+                          </Box>
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={enabledIndicators[indicator.id] ?? true}
+                                onChange={(e) => toggleIndicator(indicator.id, e.target.checked)}
+                              />
+                            }
+                            label={(enabledIndicators[indicator.id] ?? true) ? 'Enabled' : 'Disabled'}
+                          />
+                        </Stack>
 
-              {/* Trend Tab */}
-              {activeTab === 2 && (
-                <Box mt={2}>
-                  <Typography variant="subtitle1" gutterBottom>
-                    Supertrend Indicator
-                  </Typography>
-                  <Grid container spacing={3}>
-                    <Grid item xs={12} md={4}>
-                      <TextField
-                        fullWidth
-                        type="number"
-                        label="HL Factor"
-                        value={indicators.supertrend.hl_factor}
-                        onChange={(e) => updateIndicator('supertrend', 'hl_factor', parseFloat(e.target.value))}
-                        inputProps={{ min: 0.01, max: 1.0, step: 0.01 }}
-                        helperText="Typical range: 0.05"
-                      />
-                    </Grid>
-                    <Grid item xs={12} md={4}>
-                      <TextField
-                        fullWidth
-                        type="number"
-                        label="ATR Period"
-                        value={indicators.supertrend.atr_period}
-                        onChange={(e) => updateIndicator('supertrend', 'atr_period', parseInt(e.target.value))}
-                        inputProps={{ min: 1, max: 100 }}
-                        helperText="Typical range: 10"
-                      />
-                    </Grid>
-                    <Grid item xs={12} md={4}>
-                      <TextField
-                        fullWidth
-                        type="number"
-                        label="Multiplier"
-                        value={indicators.supertrend.multiplier}
-                        onChange={(e) => updateIndicator('supertrend', 'multiplier', parseFloat(e.target.value))}
-                        inputProps={{ min: 0.1, max: 10.0, step: 0.1 }}
-                        helperText="Typical range: 3.0"
-                      />
-                    </Grid>
-                  </Grid>
-                </Box>
+                        {renderIndicatorFields(indicator)}
+                      </Box>
+                    ))
+                  )}
+                </Stack>
               )}
             </CardContent>
           </Card>

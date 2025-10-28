@@ -54,6 +54,40 @@ app.add_middleware(
 
 logger = get_logger("api")
 
+# ---------------------------------------------------------------------------
+# Indicator serialization helpers
+# ---------------------------------------------------------------------------
+
+def _serialize_indicator(indicator):
+    """Convert a unified indicator into API-friendly structure."""
+    return {
+        "id": indicator.get_id(),
+        "name": indicator.get_name(),
+        "description": indicator.get_description(),
+        "required_columns": indicator.get_required_columns(),
+        "parameter_schema": indicator.get_parameter_schema(),
+        "capabilities": indicator.get_capabilities(),
+        "asset_types": indicator.get_asset_types(),
+    }
+
+
+def _collect_indicator_definitions(asset_type: Optional[str] = None):
+    """Fetch indicator definitions from unified registry with optional asset-type filtering."""
+    from finance_tools.analysis.indicators import registry as indicator_registry
+
+    indicators_map = {}
+
+    if asset_type:
+        normalized = asset_type.lower()
+        if normalized not in {"stock", "etf"}:
+            raise ValueError(f"Invalid asset_type '{asset_type}'. Expected 'stock' or 'etf'.")
+        indicators_map = indicator_registry.get_by_asset_type(normalized)
+    else:
+        indicators_map = indicator_registry.get_all()
+
+    return [_serialize_indicator(indicator) for indicator in indicators_map.values()]
+
+
 # Global state for download progress
 download_progress = {
     "is_downloading": False,
@@ -2488,29 +2522,34 @@ async def run_stock_scan_analysis(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/analytics/indicators")
+async def get_indicators(
+    asset_type: Optional[str] = Query(
+        None,
+        description="Filter indicators by asset type (stock or etf)."
+    )
+):
+    """
+    Get indicator definitions from the unified registry.
+    """
+    try:
+        indicators = _collect_indicator_definitions(asset_type)
+        return {"indicators": indicators}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.error(f"Error getting indicators: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/analytics/stock/indicators")
 async def get_stock_indicators():
     """
-    Get all available stock indicators with their schemas.
-    This endpoint returns plugin-based indicators that can be dynamically added to the system.
+    Backwards-compatible endpoint that returns only stock indicators.
     """
     try:
-        # Import registry to get all registered indicators
-        from finance_tools.stocks.analysis.indicators.registry import registry
-        
-        indicators = []
-        for indicator_id, indicator in registry.get_all().items():
-            indicators.append({
-                'id': indicator_id,
-                'name': indicator.get_name(),
-                'description': indicator.get_description(),
-                'required_columns': indicator.get_required_columns(),
-                'parameter_schema': indicator.get_parameter_schema(),
-                'capabilities': indicator.get_capabilities()
-            })
-        
+        indicators = _collect_indicator_definitions("stock")
         return {"indicators": indicators}
-    
     except Exception as e:
         logger.error(f"Error getting stock indicators: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -313,8 +313,11 @@ export const AnalysisResultsPanel: React.FC<AnalysisResultsPanelProps> = ({ onRe
               result={selectedResult}
               onRerun={async (parameters) => {
                 try {
-                  // If onRerunRequest is provided for stock_scan, use it to navigate to form
-                  if (onRerunRequest && selectedResult.analysis_type === 'stock_scan') {
+                  // If onRerunRequest is provided, use it to navigate to the appropriate form
+                  if (
+                    onRerunRequest &&
+                    (selectedResult.analysis_type === 'stock_scan' || selectedResult.analysis_type === 'etf_scan')
+                  ) {
                     onRerunRequest(selectedResult.analysis_type, parameters);
                     setResultsDialogOpen(false);
                     return;
@@ -351,4 +354,3 @@ export const AnalysisResultsPanel: React.FC<AnalysisResultsPanelProps> = ({ onRe
 };
 
 export default AnalysisResultsPanel;
-

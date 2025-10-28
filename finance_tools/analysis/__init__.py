@@ -112,4 +112,4 @@ __all__ = [
     # Portfolio
     "PortfolioOptimizer", "PortfolioSuggester", "optimize_portfolio",
     "suggest_portfolio_allocation", "suggest_rebalancing", "suggest_risk_management"
-] 
+]

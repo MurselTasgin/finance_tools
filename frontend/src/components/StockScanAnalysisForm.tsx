@@ -46,7 +46,7 @@ import {
   Edit as EditIcon,
 } from '@mui/icons-material';
 import { CircularProgress } from '@mui/material';
-import { stockApi } from '../services/api';
+import { stockApi, analyticsApi } from '../services/api';
 
 interface SelectedScanner {
   id: string;
@@ -190,7 +190,7 @@ export const StockScanAnalysisForm: React.FC<StockScanAnalysisFormProps> = ({
 
   const loadIndicators = async () => {
     try {
-      const response = await stockApi.getIndicators();
+      const response = await analyticsApi.getIndicators('stock');
       setAvailableIndicators(response.indicators || []);
     } catch (err) {
       console.error('Failed to load indicators:', err);

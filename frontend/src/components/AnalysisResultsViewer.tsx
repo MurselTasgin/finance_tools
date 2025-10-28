@@ -801,26 +801,165 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
   );
 
   const renderScannerConfiguration = () => {
-    if (result.analysis_type !== 'etf_scan' || !result.parameters) {
+    if (
+      !result.parameters ||
+      (result.analysis_type !== 'etf_scan' && result.analysis_type !== 'stock_scan')
+    ) {
       return null;
     }
 
-    const { scanners, scanner_configs, weights, actual_parameters, scanner_summary } = result.parameters;
+    const {
+      scanners = [],
+      scanner_configs = {},
+      weights = {},
+      actual_parameters,
+      scanner_summary,
+      symbols = [],
+      specific_codes = [],
+      fund_type,
+      include_keywords,
+      exclude_keywords,
+      case_sensitive,
+      buy_threshold,
+      sell_threshold,
+      score_threshold,
+      start_date,
+      end_date,
+      column,
+      sector,
+      industry,
+    } = result.parameters;
+
+    const isStock = result.analysis_type === 'stock_scan';
+    const keywordListIncluded = Array.isArray(include_keywords) ? include_keywords : [];
+    const keywordListExcluded = Array.isArray(exclude_keywords) ? exclude_keywords : [];
+    const totalScanners = scanner_summary?.total_scanners ?? scanners.length;
+    const buyCount = scanner_summary?.buy_count ?? (result as any).buy_count ?? 0;
+    const sellCount = scanner_summary?.sell_count ?? (result as any).sell_count ?? 0;
+    const holdCount = scanner_summary?.hold_count ?? (result as any).hold_count ?? 0;
+    const multiReasonCount = scanner_summary?.multi_reason_count ?? (result as any).multi_reason_count ?? 0;
 
     return (
       <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Typography variant="h6" sx={{ mb: 2 }}>
-            🔍 Scanner Configuration
+          <Typography
+            variant="h6"
+            sx={{ mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
+          >
+            <span>{isStock ? 'Stock' : 'ETF'} Scan Configuration</span>
+            {onRerun && (
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => {
+                  setEditedParameters(result.parameters);
+                  setRerunDialogOpen(true);
+                }}
+                startIcon={<SearchIcon />}
+              >
+                Rerun with Same Setup
+              </Button>
+            )}
           </Typography>
           <Grid container spacing={2}>
+            {/* Assets Selection */}
+            <Grid item xs={12} sm={6} md={4}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                {isStock ? 'Stocks Analyzed' : 'Funds Analyzed'}
+              </Typography>
+              {isStock ? (
+                symbols.length > 0 ? (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                    {symbols.map((symbol: string, idx: number) => (
+                      <Chip key={idx} label={symbol} size="small" color="primary" variant="outlined" />
+                    ))}
+                  </Box>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    All available stocks
+                  </Typography>
+                )
+              ) : specific_codes.length > 0 ? (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  {specific_codes.map((code: string, idx: number) => (
+                    <Chip key={idx} label={code} size="small" color="primary" variant="outlined" />
+                  ))}
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  Fund Type: {fund_type || 'All'}
+                </Typography>
+              )}
+            </Grid>
+
+            {/* Analysis Settings */}
+            <Grid item xs={12} sm={6} md={4}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                Analysis Settings
+              </Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                <Chip label={`Start: ${start_date || 'N/A'}`} size="small" variant="outlined" />
+                <Chip label={`End: ${end_date || 'N/A'}`} size="small" variant="outlined" />
+                <Chip label={`Column: ${column || (isStock ? 'close' : 'price')}`} size="small" variant="outlined" />
+                {isStock && sector && <Chip label={`Sector: ${sector}`} size="small" variant="outlined" />}
+                {isStock && industry && <Chip label={`Industry: ${industry}`} size="small" variant="outlined" />}
+                {!isStock && fund_type && <Chip label={`Fund Type: ${fund_type}`} size="small" variant="outlined" />}
+              </Box>
+            </Grid>
+
+            {/* Thresholds */}
+            <Grid item xs={12} sm={6} md={4}>
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                Thresholds
+              </Typography>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                {isStock ? (
+                  <>
+                    <Chip label={`Buy ≥ ${buy_threshold ?? 1}`} size="small" color="success" variant="outlined" />
+                    <Chip label={`Sell ≤ ${sell_threshold ?? 1}`} size="small" color="error" variant="outlined" />
+                  </>
+                ) : (
+                  <Chip
+                    label={`Score Threshold ≥ ${score_threshold ?? 0}`}
+                    size="small"
+                    color="primary"
+                    variant="outlined"
+                  />
+                )}
+                {typeof case_sensitive === 'boolean' && !isStock && (
+                  <Chip
+                    label={`Keywords: ${case_sensitive ? 'Case Sensitive' : 'Case Insensitive'}`}
+                    size="small"
+                    variant="outlined"
+                  />
+                )}
+              </Box>
+            </Grid>
+
+            {/* Keyword Filters */}
+            {!isStock && (keywordListIncluded.length > 0 || keywordListExcluded.length > 0) && (
+              <Grid item xs={12} sm={6}>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                  Keyword Filters
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                  {keywordListIncluded.map((kw: string, idx: number) => (
+                    <Chip key={`inc-${idx}`} label={`Include: ${kw}`} size="small" color="success" variant="outlined" />
+                  ))}
+                  {keywordListExcluded.map((kw: string, idx: number) => (
+                    <Chip key={`exc-${idx}`} label={`Exclude: ${kw}`} size="small" color="error" variant="outlined" />
+                  ))}
+                </Box>
+              </Grid>
+            )}
+
             {/* Selected Scanners */}
             <Grid item xs={12} sm={6}>
               <Typography variant="subtitle2" sx={{ mb: 1 }}>
                 Selected Scanners
               </Typography>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {(scanners || []).map((scanner: string) => (
+                {scanners.map((scanner: string) => (
                   <Chip
                     key={scanner}
                     label={scanner.replace('_', ' ').toUpperCase()}
@@ -838,7 +977,7 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
                 Scanner Weights
               </Typography>
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                {Object.entries(weights || {}).map(([scanner, weight]) => {
+                {Object.entries(weights).map(([scanner, weight]) => {
                   const weightValue = typeof weight === 'number' ? weight : 0;
                   return (
                     <Chip
@@ -854,7 +993,7 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
             </Grid>
 
             {/* Individual Scanner Parameters */}
-            {scanner_configs && (
+            {scanner_configs && Object.keys(scanner_configs).length > 0 && (
               <Grid item xs={12}>
                 <Typography variant="subtitle2" sx={{ mb: 2 }}>
                   Individual Scanner Parameters
@@ -917,195 +1056,19 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
               </Grid>
             )}
 
-            {/* Scanner Summary */}
-            {scanner_summary && (
-              <Grid item xs={12}>
-                <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                  Execution Summary
-                </Typography>
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                  <Chip
-                    label={`Total Scanners: ${scanner_summary.total_scanners}`}
-                    size="small"
-                    color="info"
-                  />
-                  <Chip
-                    label={`BUY: ${scanner_summary.buy_count}`}
-                    size="small"
-                    color="success"
-                  />
-                  <Chip
-                    label={`SELL: ${scanner_summary.sell_count}`}
-                    size="small"
-                    color="error"
-                  />
-                  <Chip
-                    label={`HOLD: ${scanner_summary.hold_count}`}
-                    size="small"
-                    color="default"
-                  />
-                  <Chip
-                    label={`Multi-Reason: ${scanner_summary.multi_reason_count}`}
-                    size="small"
-                    color="secondary"
-                  />
-                </Box>
-              </Grid>
-            )}
-          </Grid>
-        </CardContent>
-      </Card>
-    );
-  };
-
-  const renderStockScanConfiguration = () => {
-    if (result.analysis_type !== 'stock_scan' || !result.parameters) {
-      return null;
-    }
-
-    const {
-      symbols,
-      scanners,
-      scanner_configs,
-      weights,
-      buy_threshold,
-      sell_threshold,
-      start_date,
-      end_date,
-      column,
-      sector,
-      industry
-    } = result.parameters;
-
-    const buy_count = (result as any).buy_count || 0;
-    const sell_count = (result as any).sell_count || 0;
-    const hold_count = (result as any).hold_count || 0;
-
-    return (
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <span>Analysis Configuration</span>
-            {onRerun && (
-              <Button
-                size="small"
-                variant="outlined"
-                onClick={() => {
-                  setEditedParameters(result.parameters);
-                  setRerunDialogOpen(true);
-                }}
-                startIcon={<SearchIcon />}
-              >
-                Rerun with Same Setup
-              </Button>
-            )}
-          </Typography>
-
-          <Grid container spacing={3}>
-            {/* Stocks Analyzed */}
-            <Grid item xs={12} md={6}>
-              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
-                Stocks Analyzed
-              </Typography>
-              {symbols && symbols.length > 0 ? (
-                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                  {symbols.map((symbol: string, idx: number) => (
-                    <Chip key={idx} label={symbol} size="small" color="primary" variant="outlined" />
-                  ))}
-                </Box>
-              ) : (
-                <Typography variant="body2" color="text.secondary">All available stocks</Typography>
-              )}
-            </Grid>
-
-            {/* Date Range & Column */}
-            <Grid item xs={12} md={6}>
-              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
-                Analysis Period & Settings
-              </Typography>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                <Chip label={`Start: ${start_date || 'N/A'}`} size="small" variant="outlined" />
-                <Chip label={`End: ${end_date || 'N/A'}`} size="small" variant="outlined" />
-                <Chip label={`Column: ${column || 'close'}`} size="small" variant="outlined" />
-                {sector && <Chip label={`Sector: ${sector}`} size="small" variant="outlined" />}
-                {industry && <Chip label={`Industry: ${industry}`} size="small" variant="outlined" />}
-              </Box>
-            </Grid>
-
-            {/* Thresholds */}
+            {/* Summary */}
             <Grid item xs={12}>
-              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
-                Recommendation Thresholds
+              <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                Execution Summary
               </Typography>
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                <Chip
-                  label={`BUY: Score ≥ ${buy_threshold !== undefined ? buy_threshold : 1.0}`}
-                  size="small"
-                  color="success"
-                />
-                <Chip
-                  label={`SELL: Score ≤ -${sell_threshold !== undefined ? sell_threshold : 1.0}`}
-                  size="small"
-                  color="error"
-                />
-                <Chip
-                  label={`HOLD: Score between -${sell_threshold !== undefined ? sell_threshold : 1.0} and ${buy_threshold !== undefined ? buy_threshold : 1.0}`}
-                  size="small"
-                  color="default"
-                />
-              </Box>
-            </Grid>
-
-            {/* Selected Indicators */}
-            <Grid item xs={12}>
-              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
-                Selected Indicators ({scanners?.length || 0})
-              </Typography>
-              {scanners && scanners.length > 0 ? (
-                <Grid container spacing={2}>
-                  {scanners.map((indicatorId: string) => {
-                    const config = scanner_configs?.[indicatorId] || {};
-                    const weight = weights?.[indicatorId] || 0;
-
-                    return (
-                      <Grid item xs={12} sm={6} md={4} key={indicatorId}>
-                        <Paper sx={{ p: 1.5, bgcolor: 'background.default' }}>
-                          <Typography variant="body2" sx={{ fontWeight: 'bold', mb: 0.5 }}>
-                            {indicatorId.replace(/_/g, ' ').toUpperCase()}
-                          </Typography>
-                          <Chip label={`Weight: ${weight}`} size="small" color="primary" sx={{ mb: 0.5 }} />
-                          {Object.keys(config).length > 0 && (
-                            <Box sx={{ mt: 1 }}>
-                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                                Parameters:
-                              </Typography>
-                              {Object.entries(config).map(([param, value]) => (
-                                <Typography key={param} variant="caption" display="block" sx={{ pl: 1 }}>
-                                  • {param}: {Array.isArray(value) ? `[${value.join(', ')}]` : String(value)}
-                                </Typography>
-                              ))}
-                            </Box>
-                          )}
-                        </Paper>
-                      </Grid>
-                    );
-                  })}
-                </Grid>
-              ) : (
-                <Typography variant="body2" color="text.secondary">No indicators selected</Typography>
-              )}
-            </Grid>
-
-            {/* Results Summary */}
-            <Grid item xs={12}>
-              <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 'bold' }}>
-                Results Summary
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                <Chip label={`Total Results: ${result.result_count || 0}`} size="small" color="info" />
-                <Chip label={`BUY: ${buy_count}`} size="small" color="success" />
-                <Chip label={`SELL: ${sell_count}`} size="small" color="error" />
-                <Chip label={`HOLD: ${hold_count}`} size="small" color="default" />
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                <Chip label={`Total Scanners: ${totalScanners}`} size="small" color="info" />
+                <Chip label={`BUY: ${buyCount}`} size="small" color="success" />
+                <Chip label={`SELL: ${sellCount}`} size="small" color="error" />
+                <Chip label={`HOLD: ${holdCount}`} size="small" color="default" />
+                {multiReasonCount > 0 && (
+                  <Chip label={`Multi-Reason: ${multiReasonCount}`} size="small" color="secondary" />
+                )}
                 <Chip label={`Execution: ${result.execution_time_ms || 0}ms`} size="small" variant="outlined" />
               </Box>
             </Grid>
@@ -1125,8 +1088,6 @@ export const AnalysisResultsViewer: React.FC<AnalysisResultsViewerProps> = ({ re
       {renderSummary()}
 
       {renderScannerConfiguration()}
-
-      {renderStockScanConfiguration()}
 
       <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>

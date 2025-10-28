@@ -331,14 +331,16 @@ export const stockApi = {
     return response.data;
   },
 
-  getIndicators: async (): Promise<{ indicators: any[] }> => {
-    const response = await api.get('/api/analytics/stock/indicators');
-    return response.data;
-  },
 };
 
 // Analytics API
 export const analyticsApi = {
+  getIndicators: async (assetType?: string): Promise<{ indicators: any[] }> => {
+    const response = await api.get('/api/analytics/indicators', {
+      params: assetType ? { asset_type: assetType } : {},
+    });
+    return response.data;
+  },
   // Task Management - Start Analysis in Background
   startAnalysis: async (analysis_type: string, analysis_name: string, parameters: any): Promise<{ task_id: string; message: string }> => {
     const response = await api.post('/api/analytics/run', {

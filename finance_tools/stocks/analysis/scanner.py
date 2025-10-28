@@ -5,8 +5,7 @@ from typing import List, Dict, Tuple, Any, Optional
 import pandas as pd
 
 from ...logging import get_logger
-from .indicators.registry import registry
-from .indicators.base import IndicatorConfig
+from ...analysis.indicators import registry as unified_indicator_registry, IndicatorConfig
 from .scanner_types import StockScanCriteria, StockScanResult, StockSuggestion
 
 
@@ -39,9 +38,13 @@ class StockScanner:
             indicator_details = {}  # Store per-indicator details
             
             for indicator_id, config in indicator_configs.items():
-                indicator = registry.get(indicator_id)
+                indicator = unified_indicator_registry.get(indicator_id)
                 if indicator is None:
                     self.logger.warning(f"⚠️ Unknown indicator: {indicator_id}")
+                    continue
+
+                if "stock" not in indicator.get_asset_types():
+                    self.logger.warning(f"⚠️ Indicator {indicator_id} does not support Stock asset type")
                     continue
                 
                 # Calculate indicator
@@ -91,7 +94,7 @@ class StockScanner:
         configs = {}
         
         # Get all registered indicators
-        all_indicators = registry.get_all()
+        all_indicators = unified_indicator_registry.get_by_asset_type("stock")
         
         # For each indicator, check if it has weight > 0
         for indicator_id, indicator in all_indicators.items():
@@ -143,8 +146,11 @@ class StockScanner:
         
         # Get explanations and scores from each indicator
         for indicator_id, config in indicator_configs.items():
-            indicator = registry.get(indicator_id)
+            indicator = unified_indicator_registry.get(indicator_id)
             if indicator is None:
+                continue
+
+            if "stock" not in indicator.get_asset_types():
                 continue
             
             # Get explanation

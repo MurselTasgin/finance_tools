@@ -8,8 +8,7 @@ import {
 } from '@mui/material';
 import { ETFTechnicalAnalysisForm } from './ETFTechnicalAnalysisForm';
 import { AnalysisResultsViewer } from './AnalysisResultsViewer';
-import { ETFScanAnalysisForm } from './ETFScanAnalysisForm';
-import { StockScanAnalysisForm } from './StockScanAnalysisForm';
+import { UnifiedScanAnalysisPanel } from './UnifiedScanAnalysisPanel';
 import AnalysisJobsPanel from './AnalysisJobsPanel';
 import AnalysisResultsPanel from './AnalysisResultsPanel';
 import {
@@ -131,7 +130,7 @@ export const AnalyticsDashboard: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   // Rerun state - for pre-populating forms when rerunning analyses
-  const [rerunParameters, setRerunParameters] = useState<any>(null);
+  const [rerunScanData, setRerunScanData] = useState<{ assetType: 'stock' | 'etf'; parameters: any } | null>(null);
 
   // Analysis functions
   const viewResult = (result: AnalysisResult) => {
@@ -162,16 +161,17 @@ export const AnalyticsDashboard: React.FC = () => {
       scannerIds: parameters?.scanner_configs ? Object.keys(parameters.scanner_configs) : []
     });
     
-    // Store parameters for pre-filling the form
-    setRerunParameters(parameters);
+    setRerunScanData(null);
 
     // Navigate to the appropriate tab based on analysis type
     switch (analysisType) {
       case 'stock_scan':
-        setActiveTab(3); // Stock Scan tab
+        setRerunScanData({ assetType: 'stock', parameters });
+        setActiveTab(1); // Unified Scan tab
         break;
       case 'etf_scan':
-        setActiveTab(1); // ETF Scan tab
+        setRerunScanData({ assetType: 'etf', parameters });
+        setActiveTab(1); // Unified Scan tab
         break;
       case 'stock_technical':
         setActiveTab(2); // Stock Technical tab
@@ -377,7 +377,7 @@ export const AnalyticsDashboard: React.FC = () => {
                   onClick={() => setActiveTab(1)}
                   startIcon={<AssessmentIcon />}
                 >
-                  ETF Scan Analysis
+                  Scan Analysis
                 </Button>
 
                 <Button
@@ -393,9 +393,9 @@ export const AnalyticsDashboard: React.FC = () => {
                   variant="outlined"
                   fullWidth
                   onClick={() => setActiveTab(3)}
-                  startIcon={<SearchIcon />}
+                  startIcon={<HistoryIcon />}
                 >
-                  Stock Scan Analysis
+                  Jobs &amp; History
                 </Button>
               </Stack>
             </CardContent>
@@ -423,7 +423,7 @@ export const AnalyticsDashboard: React.FC = () => {
                       </Typography>
                     </Box>
                   ))}
-                  <Button size="small" onClick={() => setActiveTab(3)}>
+                  <Button size="small" onClick={() => setActiveTab(4)}>
                     View All Results
                   </Button>
                 </Box>
@@ -442,9 +442,8 @@ export const AnalyticsDashboard: React.FC = () => {
         <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
           <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
             <Tab label="ETF Technical" />
-            <Tab label="ETF Scan" />
+            <Tab label="Scan Analysis" />
             <Tab label="Stock Technical" />
-            <Tab label="Stock Scan" />
             <Tab label="Jobs & History" />
             <Tab label="Results & History" />
           </Tabs>
@@ -459,10 +458,11 @@ export const AnalyticsDashboard: React.FC = () => {
         </TabPanel>
 
         <TabPanel value={activeTab} index={1}>
-          <ETFScanAnalysisPanel
-            capabilities={capabilities}
+          <UnifiedScanAnalysisPanel
             onRunAnalysis={runAnalysis}
-            running={runningAnalysis === 'etf_scan'}
+            runningAnalysis={runningAnalysis}
+            rerunData={rerunScanData}
+            onRerunConsumed={() => setRerunScanData(null)}
           />
         </TabPanel>
 
@@ -475,20 +475,10 @@ export const AnalyticsDashboard: React.FC = () => {
         </TabPanel>
 
         <TabPanel value={activeTab} index={3}>
-          <StockScanAnalysisPanel
-            capabilities={capabilities}
-            onRunAnalysis={runAnalysis}
-            running={runningAnalysis === 'stock_scan'}
-            initialParameters={rerunParameters}
-            onParametersUsed={() => setRerunParameters(null)}
-          />
-        </TabPanel>
-
-        <TabPanel value={activeTab} index={4}>
           <AnalysisJobsPanel onRerunRequest={handleRerunWithParameters} />
         </TabPanel>
 
-        <TabPanel value={activeTab} index={5}>
+        <TabPanel value={activeTab} index={4}>
           <AnalysisResultsPanel onRerunRequest={handleRerunWithParameters} />
         </TabPanel>
       </Paper>
@@ -518,6 +508,10 @@ export const AnalyticsDashboard: React.FC = () => {
             <AnalysisResultsViewer
               result={selectedResult}
               onExport={(format) => handleExport(selectedResult, format)}
+              onRerun={(parameters) =>
+                selectedResult &&
+                handleRerunWithParameters(selectedResult.analysis_type, parameters)
+              }
             />
           )}
         </DialogContent>
@@ -546,13 +540,6 @@ const ETFTechnicalAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysis,
   />
 );
 
-const ETFScanAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysis, running }) => (
-  <ETFScanAnalysisForm
-    onRunAnalysis={(parameters) => onRunAnalysis('etf_scan', 'ETF Scan Analysis', parameters)}
-    running={running}
-  />
-);
-
 const StockTechnicalAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysis, running }) => (
   <Box>
     <Typography variant="h6" gutterBottom>
@@ -573,15 +560,6 @@ const StockTechnicalAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysi
       {running ? 'Running Analysis...' : 'Run Sample Analysis'}
     </Button>
   </Box>
-);
-
-const StockScanAnalysisPanel: React.FC<any> = ({ capabilities, onRunAnalysis, running, initialParameters, onParametersUsed }) => (
-  <StockScanAnalysisForm
-    onRunAnalysis={(parameters) => onRunAnalysis('stock_scan', 'Stock Scan Analysis', parameters)}
-    running={running}
-    initialParameters={initialParameters}
-    onParametersUsed={onParametersUsed}
-  />
 );
 
 const ResultsHistoryPanel: React.FC<any> = ({
@@ -826,4 +804,3 @@ const ResultsHistoryPanel: React.FC<any> = ({
     )}
   </Box>
 );
-
