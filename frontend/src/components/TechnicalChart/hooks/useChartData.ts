@@ -40,7 +40,15 @@ export function useChartData({
   const [processedData, setProcessedData] = useState<ProcessedChartData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Create a stable query key
+  // Create a stable query key - sort indicators to ensure consistent key
+  const sortedIndicators = [...indicators].sort();
+  const sortedParameters = Object.keys(indicatorParameters)
+    .sort()
+    .reduce((acc, key) => {
+      acc[key] = indicatorParameters[key];
+      return acc;
+    }, {} as Record<string, Record<string, any>>);
+
   const queryKey = [
     'technicalChart',
     assetType,
@@ -48,9 +56,18 @@ export function useChartData({
     startDate,
     endDate,
     interval,
-    JSON.stringify(indicators),
-    JSON.stringify(indicatorParameters),
+    JSON.stringify(sortedIndicators),
+    JSON.stringify(sortedParameters),
   ];
+  
+  // Debug logging
+  if (sortedIndicators.includes('number_of_shares') || sortedIndicators.includes('number_of_investors')) {
+    console.log('🔍 useChartData query key:', {
+      indicators: sortedIndicators,
+      parameters: sortedParameters,
+      queryKey
+    });
+  }
 
   // Fetch data using React Query
   const {
@@ -61,14 +78,18 @@ export function useChartData({
   } = useQuery<ChartDataResponse>(
     queryKey,
     async () => {
+      // Log when query function is called
+      if (sortedIndicators.includes('number_of_shares') || sortedIndicators.includes('number_of_investors')) {
+        console.log('🚀 Fetching chart data with indicators:', sortedIndicators);
+      }
       if (!identifier) {
         throw new Error('Symbol/identifier is required');
       }
 
-      // Build indicators payload
+      // Build indicators payload - use sorted indicators for consistency
       const indicatorPayload: Record<string, any> = {};
-      indicators.forEach((indicatorId) => {
-        indicatorPayload[indicatorId] = indicatorParameters[indicatorId] || {};
+      sortedIndicators.forEach((indicatorId) => {
+        indicatorPayload[indicatorId] = sortedParameters[indicatorId] || {};
       });
 
       const response = await analyticsApi.getTechnicalChart({
@@ -80,17 +101,31 @@ export function useChartData({
         indicators: indicatorPayload,
       });
 
+      // Debug logging for ETF indicators
+      if (sortedIndicators.includes('number_of_shares') || sortedIndicators.includes('number_of_investors')) {
+        console.log('📊 API response received:', {
+          indicatorDefinitions: response.indicator_definitions?.map((ind: any) => ({
+            id: ind.id,
+            name: ind.name,
+            columns: ind.columns
+          })),
+          columns: response.columns,
+          timeseriesLength: response.timeseries?.length
+        });
+      }
+
       return response;
     },
     {
-      enabled: enabled && !!identifier,
-      staleTime: 5 * 60 * 1000, // 5 minutes
+      enabled: enabled && !!identifier && identifier.trim().length > 0,
+      staleTime: 0, // Always refetch when query key changes (for indicator changes)
       cacheTime: 10 * 60 * 1000, // 10 minutes
       refetchOnWindowFocus: false,
       retry: 1,
       onError: (err: any) => {
         const errorMessage = err?.response?.data?.detail || err?.message || 'Failed to load chart data';
         setError(errorMessage);
+        // Don't throw - just set error state
       },
     }
   );
@@ -100,16 +135,32 @@ export function useChartData({
     if (rawData) {
       try {
         const processed = processChartData(rawData);
+        
+        // Debug logging for ETF indicators
+        if (sortedIndicators.includes('number_of_shares') || sortedIndicators.includes('number_of_investors')) {
+          console.log('✅ Processed chart data:', {
+            ohlcvLength: processed.ohlcv.length,
+            indicators: processed.indicators.map(ind => ({
+              id: ind.id,
+              name: ind.name,
+              type: ind.type,
+              seriesCount: ind.series.length,
+              series: ind.series.map(s => ({ id: s.id, name: s.name, dataLength: s.data.length }))
+            }))
+          });
+        }
+        
         setProcessedData(processed);
         setError(null);
       } catch (err: any) {
+        console.error('❌ Error processing chart data:', err);
         setError(`Failed to process chart data: ${err.message}`);
         setProcessedData(null);
       }
     } else {
       setProcessedData(null);
     }
-  }, [rawData]);
+  }, [rawData, sortedIndicators]);
 
   // Handle query error
   useEffect(() => {

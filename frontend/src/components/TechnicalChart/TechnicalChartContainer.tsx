@@ -3,19 +3,19 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Box, CircularProgress, Alert, Paper } from '@mui/material';
 import { Time } from 'lightweight-charts';
 import { ChartPanel, ChartPanelHandle } from './components/ChartPanel';
-import { ChartLegend } from './components/ChartLegend';
+import { PriceInfoOverlay } from './components/PriceInfoOverlay';
+import { AssetHeader } from './components/AssetHeader';
 import { PanelResizer } from './components/PanelResizer';
 import { ChartToolbar } from './components/ChartToolbar';
 import { IndicatorSelector } from './components/IndicatorSelector';
 import { IndicatorParameterEditor } from './components/IndicatorParameterEditor';
+import { AssetSelector } from './components/AssetSelector';
 import { useChartData } from './hooks/useChartData';
 import {
   TechnicalChartContainerProps,
   CrosshairData,
   ChartOptions,
   ChartPanel as ChartPanelType,
-  DrawingTool,
-  ChartDrawing,
 } from './types/chart.types';
 import { getDefaultChartOptions } from './utils/chartHelpers';
 import {
@@ -44,6 +44,7 @@ export const TechnicalChartContainer: React.FC<TechnicalChartContainerProps> = (
   onDataLoad,
   onError,
   onIndicatorsChange,
+  onAssetChange,
   height = 600,
   theme = 'dark',
   showToolbar = true,
@@ -59,8 +60,7 @@ export const TechnicalChartContainer: React.FC<TechnicalChartContainerProps> = (
   const [indicatorSelectorOpen, setIndicatorSelectorOpen] = useState(false);
   const [paramEditorOpen, setParamEditorOpen] = useState(false);
   const [editingIndicatorId, setEditingIndicatorId] = useState<string | null>(null);
-  const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingTool | null>(null);
-  const [panelDrawings, setPanelDrawings] = useState<Record<string, ChartDrawing[]>>({});
+  const [assetSelectorOpen, setAssetSelectorOpen] = useState(false);
 
   // Refs for each panel to enable synchronization
   const panelRefs = useRef<Map<string, React.RefObject<ChartPanelHandle>>>(new Map());
@@ -85,27 +85,66 @@ export const TechnicalChartContainer: React.FC<TechnicalChartContainerProps> = (
   // Initialize panels when data changes
   useEffect(() => {
     if (processedData && processedData.ohlcv.length > 0) {
-      const initialPanels = createInitialPanels(processedData);
-      setPanels(initialPanels);
-
-      // Create refs for each panel
-      panelRefs.current.clear();
-      initialPanels.forEach((panel) => {
-        if (!panelRefs.current.has(panel.id)) {
-          panelRefs.current.set(panel.id, React.createRef<ChartPanelHandle>());
+      const newPanels = createInitialPanels(processedData);
+      
+      // Preserve visibility state of existing panels (so closed panels stay closed)
+      setPanels((prevPanels) => {
+        // Only update if the structure actually changed (new indicators added/removed)
+        const prevIndicatorIds = new Set(
+          prevPanels
+            .filter(p => p.type === 'indicator')
+            .flatMap(p => p.indicators || [])
+        );
+        const newIndicatorIds = new Set(
+          newPanels
+            .filter(p => p.type === 'indicator')
+            .flatMap(p => p.indicators || [])
+        );
+        
+        // Check if indicator sets are different
+        const indicatorsChanged = 
+          prevIndicatorIds.size !== newIndicatorIds.size ||
+          Array.from(prevIndicatorIds).some(id => !newIndicatorIds.has(id)) ||
+          Array.from(newIndicatorIds).some(id => !prevIndicatorIds.has(id));
+        
+        // If panels haven't structurally changed and we have existing panels, just return them
+        if (!indicatorsChanged && prevPanels.length > 0) {
+          // Still update refs for new panels that might have been added
+          newPanels.forEach((panel) => {
+            if (!panelRefs.current.has(panel.id)) {
+              panelRefs.current.set(panel.id, React.createRef<ChartPanelHandle>());
+            }
+          });
+          return prevPanels;
         }
-      });
-
-      // Initialize drawings map for panels
-      setPanelDrawings((prev) => {
-        const updated: Record<string, ChartDrawing[]> = {};
-        initialPanels.forEach((panel) => {
-          updated[panel.id] = prev[panel.id] || [];
+        
+        const visibilityMap = new Map<string, boolean>();
+        prevPanels.forEach((panel) => {
+          visibilityMap.set(panel.id, panel.visible);
         });
-        return updated;
+
+        // Merge visibility state from previous panels
+        const mergedPanels = newPanels.map((newPanel) => {
+          const previousVisibility = visibilityMap.get(newPanel.id);
+          // Only preserve visibility if panel already existed
+          // New panels should be visible by default
+          if (previousVisibility !== undefined) {
+            return { ...newPanel, visible: previousVisibility };
+          }
+          return newPanel;
+        });
+
+        // Create refs for each panel (only for new panels, don't clear existing ones)
+        mergedPanels.forEach((panel) => {
+          if (!panelRefs.current.has(panel.id)) {
+            panelRefs.current.set(panel.id, React.createRef<ChartPanelHandle>());
+          }
+        });
+
+        return mergedPanels;
       });
     }
-  }, [processedData]);
+  }, [processedData, indicators]);
 
   // Handle data load callback
   useEffect(() => {
@@ -121,25 +160,118 @@ export const TechnicalChartContainer: React.FC<TechnicalChartContainerProps> = (
     }
   }, [error, onError]);
 
-  // Handle crosshair move - synchronize across all panels
-  const handleCrosshairMove = useCallback(
-    (data: CrosshairData | null) => {
-      setCrosshairData(data);
+  // Store crosshair data per panel to merge values from all panels
+  const panelCrosshairDataRef = useRef<Map<string, CrosshairData>>(new Map());
 
-      // Sync crosshair position to all panels
-      if (data && data.time) {
-        panelRefs.current.forEach((ref, panelId) => {
-          if (ref.current) {
-            ref.current.syncCrosshair(data.time);
-          }
-        });
-      } else {
+  // Handle crosshair move - synchronize across all panels and merge indicator values
+  const handleCrosshairMove = useCallback(
+    (data: CrosshairData | null, panelId?: string) => {
+      if (!data) {
+        setCrosshairData(null);
+        panelCrosshairDataRef.current.clear();
+        // Sync crosshair position to all panels
         panelRefs.current.forEach((ref) => {
           if (ref.current) {
             ref.current.syncCrosshair(null);
           }
         });
+        return;
       }
+
+      console.debug('📊 handleCrosshairMove called:', { 
+        panelId, 
+        time: data.time, 
+        hasClose: !!data.close,
+        indicatorCount: Object.keys(data.indicators || {}).length 
+      });
+
+      // Store crosshair data for this panel first
+      if (panelId) {
+        panelCrosshairDataRef.current.set(panelId, data);
+      }
+
+      // Sync crosshair position to all panels immediately
+      if (data.time) {
+        panelRefs.current.forEach((ref) => {
+          if (ref.current) {
+            ref.current.syncCrosshair(data.time!);
+          }
+        });
+      }
+
+      // Query indicator values from ALL panels at this time
+      // This ensures we get values from all panels, not just the one being hovered
+      const allIndicatorValues: Record<string, number> = {};
+      
+      // First, merge values from the current panel's data
+      if (data.indicators) {
+        Object.assign(allIndicatorValues, data.indicators);
+      }
+      
+      // Then query from all panels
+      panelRefs.current.forEach((ref, id) => {
+        if (ref.current && data.time) {
+          try {
+            const panelValues = ref.current.getValuesAtTime(data.time);
+            Object.assign(allIndicatorValues, panelValues);
+          } catch (err) {
+            // Panel might not be ready yet, skip it
+          }
+        }
+      });
+
+      // Also merge stored indicator values from panel crosshair events
+      panelCrosshairDataRef.current.forEach((panelData) => {
+        if (panelData.indicators) {
+          Object.assign(allIndicatorValues, panelData.indicators);
+        }
+      });
+
+      // Merge crosshair data from all panels
+      // Start with current panel's data (OHLCV from main panel)
+      const mergedData: CrosshairData = {
+        time: data.time,
+        // Preserve OHLCV from current data (typically from main panel)
+        open: data.open,
+        high: data.high,
+        low: data.low,
+        close: data.close,
+        volume: data.volume,
+        // Use merged indicator values from all panels
+        indicators: allIndicatorValues,
+      };
+
+      // Fallback: if OHLCV is missing, try to get from stored panel data (main panel)
+      if (!mergedData.open && panelCrosshairDataRef.current.has('main')) {
+        const mainPanelData = panelCrosshairDataRef.current.get('main');
+        if (mainPanelData) {
+          mergedData.open = mainPanelData.open ?? mergedData.open;
+          mergedData.high = mainPanelData.high ?? mergedData.high;
+          mergedData.low = mainPanelData.low ?? mergedData.low;
+          mergedData.close = mainPanelData.close ?? mergedData.close;
+          mergedData.volume = mainPanelData.volume ?? mergedData.volume;
+        }
+      }
+
+      // Update state immediately with merged data
+      // Force a new object reference to ensure React detects the change
+      const newCrosshairData: CrosshairData = {
+        time: mergedData.time,
+        open: mergedData.open,
+        high: mergedData.high,
+        low: mergedData.low,
+        close: mergedData.close,
+        volume: mergedData.volume,
+        indicators: { ...mergedData.indicators }, // Create new object to ensure reference change
+      };
+      
+      console.debug('✅ Setting crosshair data:', {
+        time: newCrosshairData.time,
+        close: newCrosshairData.close,
+        indicatorCount: Object.keys(newCrosshairData.indicators).length
+      });
+      
+      setCrosshairData(newCrosshairData);
     },
     []
   );
@@ -159,16 +291,50 @@ export const TechnicalChartContainer: React.FC<TechnicalChartContainerProps> = (
 
   // Handle panel close
   const handlePanelClose = useCallback((panelId: string) => {
-    setPanels((prevPanels) => togglePanelVisibility(prevPanels, panelId));
-    panelRefs.current.delete(panelId);
-
-    setPanelDrawings((prev) => {
-      if (!prev[panelId]) return prev;
-      const updated = { ...prev };
-      delete updated[panelId];
-      return updated;
+    // Find the panel being closed to check if it's an indicator panel
+    setPanels((prevPanels) => {
+      const panel = prevPanels.find((p) => p.id === panelId);
+      
+      // If it's an indicator panel (not main), remove the indicator from selection
+      if (panel && panel.type === 'indicator' && panel.indicators && panel.indicators.length > 0) {
+        const indicatorsToRemove = panel.indicators;
+        
+        // Remove indicators from selection
+        if (onIndicatorsChange) {
+          // Use a ref-based approach to get current indicators without dependency
+          const currentIndicators = indicators;
+          const newIndicators = currentIndicators.filter((indId) => !indicatorsToRemove.includes(indId));
+          
+          // Only update if there's actually a change
+          if (newIndicators.length !== currentIndicators.length) {
+            // Remove parameters for removed indicators
+            const currentParameters = indicatorParameters;
+            const newParameters = { ...currentParameters };
+            indicatorsToRemove.forEach((indId) => {
+              delete newParameters[indId];
+            });
+            
+            console.log('🗑️ Removing indicators after panel close:', {
+              panelId,
+              removedIndicators: indicatorsToRemove,
+              newIndicators,
+              currentIndicators,
+            });
+            
+            // Call immediately but use requestAnimationFrame to defer to next render cycle
+            requestAnimationFrame(() => {
+              onIndicatorsChange(newIndicators, newParameters);
+            });
+          }
+        }
+      }
+      
+      // Toggle panel visibility (or remove it completely)
+      return togglePanelVisibility(prevPanels, panelId);
     });
-  }, []);
+    
+    panelRefs.current.delete(panelId);
+  }, [indicators, indicatorParameters, onIndicatorsChange]);
 
   // Handle panel resize
   const handlePanelResize = useCallback(
@@ -211,13 +377,19 @@ export const TechnicalChartContainer: React.FC<TechnicalChartContainerProps> = (
   // Handle indicator selected from selector
   const handleIndicatorSelected = useCallback(
     (indicatorId: string, parameters: Record<string, any>) => {
+      console.log('➕ Indicator selected:', { indicatorId, parameters, currentIndicators: indicators });
+      
       if (onIndicatorsChange) {
         const newIndicators = [...indicators, indicatorId];
         const newParameters = {
           ...indicatorParameters,
           [indicatorId]: parameters,
         };
+        
+        console.log('📤 Calling onIndicatorsChange:', { newIndicators, newParameters });
         onIndicatorsChange(newIndicators, newParameters);
+      } else {
+        console.warn('⚠️ onIndicatorsChange is not defined!');
       }
     },
     [indicators, indicatorParameters, onIndicatorsChange]
@@ -238,57 +410,6 @@ export const TechnicalChartContainer: React.FC<TechnicalChartContainerProps> = (
     [indicators, indicatorParameters, onIndicatorsChange]
   );
 
-  const handleDrawingToolChange = useCallback((tool: DrawingTool | null) => {
-    setActiveDrawingTool(tool);
-  }, []);
-
-  const handleDrawingCreate = useCallback((panelId: string, drawing: ChartDrawing) => {
-    setPanelDrawings((prev) => {
-      const existing = prev[panelId] || [];
-      return {
-        ...prev,
-        [panelId]: [...existing, drawing],
-      };
-    });
-  }, []);
-
-  const handleDrawingUpdate = useCallback(
-    (panelId: string, drawingId: string, nextDrawing: ChartDrawing) => {
-      setPanelDrawings((prev) => {
-        const existing = prev[panelId] || [];
-        const index = existing.findIndex((d) => d.id === drawingId);
-        if (index === -1) return prev;
-        const updated = [...existing];
-        updated[index] = nextDrawing;
-        return {
-          ...prev,
-          [panelId]: updated,
-        };
-      });
-    },
-    []
-  );
-
-  const handleDrawingDelete = useCallback((panelId: string, drawingId: string) => {
-    setPanelDrawings((prev) => {
-      const existing = prev[panelId];
-      if (!existing) return prev;
-      return {
-        ...prev,
-        [panelId]: existing.filter((drawing) => drawing.id !== drawingId),
-      };
-    });
-  }, []);
-
-  const handleClearDrawings = useCallback(() => {
-    setPanelDrawings((prev) => {
-      const cleared: Record<string, ChartDrawing[]> = {};
-      Object.keys(prev).forEach((panelId) => {
-        cleared[panelId] = [];
-      });
-      return cleared;
-    });
-  }, []);
 
   const handleResizeDrag = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -386,25 +507,32 @@ export const TechnicalChartContainer: React.FC<TechnicalChartContainerProps> = (
         overflow: 'hidden',
       }}
     >
+      {/* Asset Header - Top Left */}
+      <AssetHeader
+        assetType={assetType}
+        identifier={identifier}
+        onAssetChange={onAssetChange ? () => setAssetSelectorOpen(true) : undefined}
+        theme={theme}
+      />
+
       {/* Chart Toolbar */}
       {showToolbar && (
         <ChartToolbar
           chartType={chartOptions.chartType}
           onChartTypeChange={handleChartTypeChange}
           onAddIndicator={handleAddIndicator}
-          activeDrawingTool={activeDrawingTool}
-          onDrawingToolChange={handleDrawingToolChange}
-          onClearDrawings={handleClearDrawings}
           theme={theme}
         />
       )}
 
-      {/* Legend overlay */}
-      <ChartLegend
-        identifier={identifier}
-        data={processedData}
+
+      {/* Price Info Overlay - follows mouse cursor */}
+      <PriceInfoOverlay
         crosshairData={crosshairData}
-        showIndicators={true}
+        data={processedData}
+        visible={true}
+        assetType={assetType}
+        theme={theme}
       />
 
       {/* Multi-panel chart layout */}
@@ -425,26 +553,27 @@ export const TechnicalChartContainer: React.FC<TechnicalChartContainerProps> = (
             const isLastPanel = index === visiblePanels.length - 1;
             const nextPanel = !isLastPanel ? visiblePanels[index + 1] : null;
 
+            // Skip rendering if no processed data
+            if (!processedData) {
+              return null;
+            }
+
             return (
               <React.Fragment key={panel.id}>
                 <ChartPanel
                   ref={panelRef}
                   panel={panel}
-                  data={processedData!}
+                  data={processedData}
                   options={chartOptions}
                   height={panelHeight}
                   isResizable={panel.type !== 'main'}
                   showHeader={panel.type !== 'main'}
+                  crosshairData={crosshairData}
                   onCrosshairMove={handleCrosshairMove}
                   onClose={handlePanelClose}
                   onVisibleRangeChange={
                     panel.type === 'main' ? handleVisibleRangeChange : undefined
                   }
-                  activeDrawingTool={panel.type === 'main' ? activeDrawingTool : null}
-                  drawings={panelDrawings[panel.id] || []}
-                  onDrawingCreate={handleDrawingCreate}
-                  onDrawingUpdate={handleDrawingUpdate}
-                  onDrawingDelete={handleDrawingDelete}
                 />
 
                 {/* Add resizer between panels (except after last panel) */}
@@ -483,6 +612,20 @@ export const TechnicalChartContainer: React.FC<TechnicalChartContainerProps> = (
         }}
         onSave={handleParametersSaved}
       />
+
+      {/* Asset Selector Dialog */}
+      {onAssetChange && (
+        <AssetSelector
+          open={assetSelectorOpen}
+          onClose={() => setAssetSelectorOpen(false)}
+          onSelectAsset={(newAssetType, newIdentifier) => {
+            onAssetChange(newAssetType, newIdentifier);
+            setAssetSelectorOpen(false);
+          }}
+          currentAssetType={assetType}
+          currentIdentifier={identifier}
+        />
+      )}
 
       {/* Chart resize handle */}
       <Box

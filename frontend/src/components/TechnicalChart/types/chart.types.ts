@@ -248,6 +248,7 @@ export interface TechnicalChartContainerProps {
   onDataLoad?: (data: ChartDataResponse) => void;
   onError?: (error: string) => void;
   onIndicatorsChange?: (indicators: string[], parameters: Record<string, Record<string, any>>) => void;
+  onAssetChange?: (assetType: AssetType, identifier: string) => void;
   height?: number;
   theme?: ChartTheme;
   showToolbar?: boolean;

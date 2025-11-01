@@ -347,7 +347,15 @@ export const DataExplorer: React.FC = () => {
                     <CircularProgress />
                   </TableCell>
                 </TableRow>
-              ) : recordsData?.data.length === 0 ? (
+              ) : !recordsData ? (
+                <TableRow>
+                  <TableCell colSpan={columns?.length || 1} align="center">
+                    <Typography variant="body2" color="textSecondary">
+                      Loading data...
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              ) : !recordsData.data || recordsData.data.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={columns?.length || 1} align="center">
                     <Typography variant="body2" color="textSecondary">
@@ -356,7 +364,7 @@ export const DataExplorer: React.FC = () => {
                   </TableCell>
                 </TableRow>
               ) : (
-                recordsData?.data.map((record: any) => (
+                recordsData.data.map((record: any) => (
                   <TableRow key={record.id} hover>
                     {columns?.map((column) => (
                       <TableCell key={column}>

@@ -44,8 +44,14 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000", 
         "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
         "http://localhost:3002", 
-        "http://127.0.0.1:3002"
+        "http://127.0.0.1:3002",
+        "http://localhost:3003",
+        "http://127.0.0.1:3003",
+        "http://localhost:3050",
+        "http://127.0.0.1:3050",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -990,6 +996,7 @@ async def get_records(
                 "market_cap": float(record.market_cap) if record.market_cap else None,
                 "number_of_investors": int(record.number_of_investors) if record.number_of_investors else None,
                 "number_of_shares": float(record.number_of_shares) if record.number_of_shares else None,
+                "fund_type": record.fund_type if hasattr(record, 'fund_type') else None,
             })
         
         total_pages = (total + pageSize - 1) // pageSize
@@ -1016,7 +1023,8 @@ async def get_columns(session = Depends(get_db_session)):
         "price",
         "market_cap",
         "number_of_investors",
-        "number_of_shares"
+        "number_of_shares",
+        "fund_type"
     ]
 
 @app.get("/api/data/funds")
@@ -2554,6 +2562,8 @@ async def get_technical_chart_data(request: Dict[str, Any]):
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date() if start_date_str else None
         end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date() if end_date_str else None
 
+        logger.info(f"📊 Chart request - asset_type: {asset_type}, identifier: {identifier}, start: {start_date}, end: {end_date}, indicators: {list(indicators_payload.keys())}")
+
         identifier = identifier.strip().upper()
 
         if asset_type == "stock":
@@ -2592,10 +2602,12 @@ async def get_technical_chart_data(request: Dict[str, Any]):
             )
 
             if df.empty:
+                logger.warning(f"⚠️ No ETF data found for identifier: {identifier}")
                 raise HTTPException(status_code=404, detail=f"No ETF data found for {identifier}")
 
             df_asset = df[df["code"] == identifier].copy()
             if df_asset.empty:
+                logger.warning(f"⚠️ No ETF data available for identifier: {identifier} (found {len(df)} rows but none match code)")
                 raise HTTPException(status_code=404, detail=f"No ETF data available for {identifier}")
 
             price_column = "price"
@@ -2609,6 +2621,7 @@ async def get_technical_chart_data(request: Dict[str, Any]):
 
         df_asset = df_asset.sort_values("date").reset_index(drop=True)
         if df_asset.empty:
+            logger.warning(f"⚠️ No data available after filtering - asset_type: {asset_type}, identifier: {identifier}")
             raise HTTPException(status_code=404, detail="No data available for requested parameters")
 
         # Apply indicators
@@ -2647,13 +2660,29 @@ async def get_technical_chart_data(request: Dict[str, Any]):
                 continue
 
             new_columns = [col for col in df_asset.columns if col not in before_columns]
-            indicator_summaries.append({
-                "id": indicator_id,
-                "name": indicator.get_name(),
-                "description": indicator.get_description(),
-                "columns": new_columns,
-                "parameters": params or {}
-            })
+            
+            # For indicators that use base columns (like number_of_shares, number_of_investors),
+            # include those required columns in the indicator definition so frontend can display them
+            required_columns = indicator.get_required_columns()
+            indicator_columns = list(new_columns)
+            for req_col in required_columns:
+                # Only include if it's in the dataframe and not already in new_columns
+                if req_col in df_asset.columns and req_col not in indicator_columns:
+                    indicator_columns.append(req_col)
+            
+            # Only add indicator summary if there are columns to display
+            # (either new columns from calculation or required base columns)
+            if indicator_columns:
+                indicator_summaries.append({
+                    "id": indicator_id,
+                    "name": indicator.get_name(),
+                    "description": indicator.get_description(),
+                    "columns": indicator_columns,
+                    "parameters": params or {}
+                })
+                logger.debug(f"✅ Added indicator {indicator_id} with columns: {indicator_columns}")
+            else:
+                logger.warning(f"⚠️ Indicator {indicator_id} produced no columns (new: {new_columns}, required: {required_columns})")
 
             if new_columns:
                 last_row = df_asset.iloc[-1]
@@ -2670,7 +2699,13 @@ async def get_technical_chart_data(request: Dict[str, Any]):
                 indicator_snapshots[indicator_id] = snapshot_values
 
         df_asset["date"] = pd.to_datetime(df_asset["date"])
+        # Convert NaN to None for JSON serialization (pandas to_json converts NaN to null)
+        # Replace NaN with None to ensure proper JSON serialization
+        df_asset = df_asset.replace({pd.NA: None, pd.NaT: None})
+        df_asset = df_asset.where(pd.notnull(df_asset), None)
         records = json.loads(df_asset.to_json(orient="records", date_format="iso"))
+
+        logger.info(f"✅ Chart data generated - rows: {len(records)}, indicators: {len(indicator_summaries)}")
 
         return {
             "asset_type": asset_type,
@@ -2688,8 +2723,11 @@ async def get_technical_chart_data(request: Dict[str, Any]):
 
     except HTTPException:
         raise
+    except ValueError as ve:
+        logger.error(f"Value error in chart request: {ve}")
+        raise HTTPException(status_code=400, detail=f"Invalid request: {str(ve)}")
     except Exception as e:
-        logger.error(f"Error generating technical chart data: {e}")
+        logger.error(f"Error generating technical chart data: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

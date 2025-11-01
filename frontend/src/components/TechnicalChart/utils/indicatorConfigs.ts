@@ -319,6 +319,50 @@ export const INDICATOR_CONFIGS: Record<string, IndicatorConfig> = {
       },
     ],
   },
+
+  number_of_shares: {
+    id: 'number_of_shares',
+    name: 'Number of Shares',
+    description: 'Tracks the number of outstanding shares with EMA smoothing (ETF only)',
+    type: 'subplot',
+    defaultParameters: {
+      ema_period: 20,
+    },
+    parameterDefinitions: [
+      {
+        key: 'ema_period',
+        label: 'EMA Period',
+        type: 'number',
+        defaultValue: 20,
+        min: 5,
+        max: 200,
+        step: 1,
+        description: 'EMA period for smoothing',
+      },
+    ],
+  },
+
+  number_of_investors: {
+    id: 'number_of_investors',
+    name: 'Number of Investors',
+    description: 'Tracks the number of investors with EMA smoothing (ETF only)',
+    type: 'subplot',
+    defaultParameters: {
+      ema_period: 20,
+    },
+    parameterDefinitions: [
+      {
+        key: 'ema_period',
+        label: 'EMA Period',
+        type: 'number',
+        defaultValue: 20,
+        min: 5,
+        max: 200,
+        step: 1,
+        description: 'EMA period for smoothing',
+      },
+    ],
+  },
 };
 
 /**

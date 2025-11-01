@@ -100,11 +100,53 @@ function processIndicators(
 ): ProcessedIndicator[] {
   const indicators: ProcessedIndicator[] = [];
 
+  // Calculate price range for overlay indicators to filter outliers
+  const priceColumn = response.price_column || 'close';
+  const priceValues: number[] = [];
+  records.forEach((record) => {
+    const price = parseFloat(record[priceColumn] || record.close || 0);
+    if (!isNaN(price) && price > 0) {
+      priceValues.push(price);
+    }
+  });
+
+  const minPrice = priceValues.length > 0 ? Math.min(...priceValues) : 0;
+  const maxPrice = priceValues.length > 0 ? Math.max(...priceValues) : 0;
+  
+  // For overlay indicators, filter out values that are clearly outliers compared to price range
+  // This prevents initial low/NaN EMA values (e.g., 0 when price is 100-200) from distorting the y-axis
+  // We'll only exclude values that are clearly unreasonable (< 10% of min price or > 300% of max price)
+  const validMinValue = minPrice > 0 ? minPrice * 0.1 : 0; // Allow values down to 10% of min price
+  const validMaxValue = maxPrice > 0 ? maxPrice * 3.0 : Infinity; // Allow values up to 300% of max price
+
   response.indicator_definitions.forEach((indicatorDef, index) => {
+    // Determine if indicator should be overlay or subplot
+    const isOverlay = isOverlayIndicator(indicatorDef.id);
+
+    // Debug logging for ETF-specific indicators
+    if (indicatorDef.id === 'number_of_shares' || indicatorDef.id === 'number_of_investors') {
+      console.log(`Processing indicator ${indicatorDef.id}:`, {
+        columns: indicatorDef.columns,
+        recordsLength: records.length,
+        firstRecordHasColumns: indicatorDef.columns.map(col => ({
+          col,
+          exists: records[0] ? records[0][col] !== undefined : false,
+          value: records[0] ? records[0][col] : null
+        }))
+      });
+    }
+
     const series = indicatorDef.columns
       .map((columnName, seriesIndex) => {
         // Check if column exists in data
         if (!records[0] || records[0][columnName] === undefined) {
+          // For ETF indicators, log why column is missing
+          if (indicatorDef.id === 'number_of_shares' || indicatorDef.id === 'number_of_investors') {
+            console.warn(`Column ${columnName} not found in records for indicator ${indicatorDef.id}`, {
+              firstRecordKeys: records[0] ? Object.keys(records[0]) : [],
+              columnName
+            });
+          }
           return null;
         }
 
@@ -117,24 +159,88 @@ function processIndicators(
           seriesType = 'area';
         }
 
-        // Extract data
-        const data = records.map((record) => {
+        // Extract data and filter invalid values
+        const data: (LineData | HistogramData)[] = [];
+        
+        records.forEach((record) => {
           const time = dateToTimestamp(record.date || record.timestamp || record.Date || record.dateTime);
-          const value = parseFloat(record[columnName]);
+          const rawValue = record[columnName];
+          
+          // Check if value is null, undefined, or empty string
+          if (rawValue === null || rawValue === undefined || rawValue === '') {
+            // For overlay indicators, skip invalid values completely to avoid affecting y-axis
+            // For ETF-specific metrics (number_of_shares, number_of_investors), skip null values
+            // For subplot indicators, use 0 for histograms only
+            if (isOverlay) {
+              return; // Skip this data point
+            } else if (seriesType === 'histogram') {
+              // For histogram with null/empty value, use 0 and default to green (positive)
+              const histogramValue = 0;
+              data.push({
+                time,
+                value: histogramValue,
+                color: '#26A69A', // Default to green for zero/null values
+              } as HistogramData);
+              return;
+            } else {
+              // For line/area subplot indicators, skip null values (they'll just have gaps)
+              return; // Skip invalid values for subplot line/area too
+            }
+          }
+
+          const value = parseFloat(rawValue);
+          
+          // Check if value is NaN or Infinity
+          if (isNaN(value) || !isFinite(value)) {
+            // Skip invalid numeric values
+            return;
+          }
+
+          // For overlay indicators, filter out values that are too far from price range
+          if (isOverlay && priceValues.length > 0) {
+            // Skip values that are significantly outside the price range
+            // This prevents initial low/NaN EMA values from distorting the chart
+            if (value < validMinValue || value > validMaxValue) {
+              return; // Skip this data point
+            }
+          }
 
           if (seriesType === 'histogram') {
-            return {
+            data.push({
               time,
-              value: isNaN(value) ? 0 : value,
+              value: value,
               color: value >= 0 ? '#26A69A' : '#EF5350',
-            } as HistogramData;
+            } as HistogramData);
           } else {
-            return {
+            data.push({
               time,
-              value: isNaN(value) ? 0 : value,
-            } as LineData;
+              value: value,
+            } as LineData);
           }
         });
+
+        // Only create series if we have valid data points
+        // For ETF indicators with EMA, allow some null values (EMA needs warm-up period)
+        // but require at least some valid data points
+        if (data.length === 0) {
+          if (indicatorDef.id === 'number_of_shares' || indicatorDef.id === 'number_of_investors') {
+            console.warn(`⚠️ Indicator ${indicatorDef.id} column ${columnName} has no valid data points`, {
+              totalRecords: records.length,
+              columnName,
+              sampleValues: records.slice(0, 5).map(r => r[columnName])
+            });
+          }
+          return null;
+        }
+        
+        // Log successful series creation for debugging
+        if (indicatorDef.id === 'number_of_shares' || indicatorDef.id === 'number_of_investors') {
+          console.log(`✅ Created series for ${indicatorDef.id} column ${columnName}:`, {
+            dataPoints: data.length,
+            firstValue: data[0]?.value,
+            lastValue: data[data.length - 1]?.value
+          });
+        }
 
         return {
           id: `${indicatorDef.id}_${columnName}`,
@@ -148,15 +254,20 @@ function processIndicators(
       .filter((s) => s !== null) as any[];
 
     if (series.length > 0) {
-      // Determine if indicator should be overlay or subplot
-      const isOverlay = isOverlayIndicator(indicatorDef.id);
-
       indicators.push({
         id: indicatorDef.id,
         name: indicatorDef.name,
         type: isOverlay ? 'overlay' : 'subplot',
         series,
       });
+    } else {
+      // Log when indicator has no valid series
+      if (indicatorDef.id === 'number_of_shares' || indicatorDef.id === 'number_of_investors') {
+        console.warn(`Indicator ${indicatorDef.id} produced no valid series`, {
+          columns: indicatorDef.columns,
+          recordsLength: records.length
+        });
+      }
     }
   });
 

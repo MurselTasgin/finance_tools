@@ -129,6 +129,18 @@ export const UnifiedTechnicalAnalysisPanel: React.FC<UnifiedTechnicalAnalysisPan
     pendingInitialStateRef.current = initialState ?? null;
   }, [initialState]);
 
+  // Reset identifier when asset type changes to ensure it matches asset type
+  useEffect(() => {
+    // If identifier doesn't match asset type, reset it
+    // This prevents 404 errors when switching between stock and ETF
+    if (assetType === 'etf' && (identifier === 'AAPL' || identifier === '')) {
+      setIdentifier('NNF');
+    } else if (assetType === 'stock' && (identifier === 'NNF' || identifier === '')) {
+      setIdentifier('AAPL');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [assetType]); // Only run when assetType changes, ignore identifier dependency to avoid loops
+
   // Load indicator metadata when asset type changes
   useEffect(() => {
     let isMounted = true;
@@ -675,6 +687,11 @@ export const UnifiedTechnicalAnalysisPanel: React.FC<UnifiedTechnicalAnalysisPan
               interval={timeframe as any}
               indicators={selectedIndicators}
               indicatorParameters={indicatorParameters}
+              onIndicatorsChange={(newIndicators, newParameters) => {
+                console.log('🔄 onIndicatorsChange called:', { newIndicators, newParameters, current: selectedIndicators });
+                setSelectedIndicators(newIndicators);
+                setIndicatorParameters(newParameters);
+              }}
               onDataLoad={(data) => {
                 setChartData(data as any);
                 setError(null);
@@ -682,6 +699,10 @@ export const UnifiedTechnicalAnalysisPanel: React.FC<UnifiedTechnicalAnalysisPan
               onError={(err) => {
                 setError(err);
                 setChartData(null);
+              }}
+              onAssetChange={(newAssetType, newIdentifier) => {
+                setAssetType(newAssetType);
+                setIdentifier(newIdentifier);
               }}
               height={600}
               theme="dark"

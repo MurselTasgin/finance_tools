@@ -225,6 +225,7 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
         wickDownColor: colorScheme.wickDownColor,
         borderUpColor: colorScheme.borderUpColor,
         borderDownColor: colorScheme.borderDownColor,
+        lastValueVisible: false,
       });
       candlestickSeries.setData(data.ohlcv);
       mainSeriesRef.current = candlestickSeries;
@@ -238,6 +239,7 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
           topColor: `${colorScheme.upColor}80`,
           bottomColor: `${colorScheme.upColor}10`,
           lineWidth: 2,
+          lastValueVisible: false,
         });
         areaSeries.setData(lineData);
         mainSeriesRef.current = areaSeries;
@@ -245,6 +247,7 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
         const lineSeries = chart.addLineSeries({
           color: colorScheme.upColor,
           lineWidth: 2,
+          lastValueVisible: false,
         });
         lineSeries.setData(lineData);
         mainSeriesRef.current = lineSeries;
@@ -259,6 +262,7 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
           type: 'volume',
         },
         priceScaleId: 'volume',
+        lastValueVisible: false,
       });
 
       // Color volume bars based on price direction
@@ -296,8 +300,14 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
               color: series.color,
               lineWidth: 1.5,
               title: series.name,
+              lastValueVisible: false,
             });
             lineSeries.setData(series.data as any);
+            // Explicitly disable last value visibility after data is set
+            lineSeries.applyOptions({ 
+              lastValueVisible: false,
+              priceLineVisible: false,
+            });
             indicatorSeriesRefs.current.set(series.id, lineSeries);
           } else if (series.type === 'area') {
             const areaSeries = chart.addAreaSeries({
@@ -306,8 +316,14 @@ export const ChartCanvas: React.FC<ChartCanvasProps> = ({
               bottomColor: `${series.color}10`,
               lineWidth: 1,
               title: series.name,
+              lastValueVisible: false,
             });
             areaSeries.setData(series.data as any);
+            // Explicitly disable last value visibility after data is set
+            areaSeries.applyOptions({ 
+              lastValueVisible: false,
+              priceLineVisible: false,
+            });
             indicatorSeriesRefs.current.set(series.id, areaSeries);
           }
         });

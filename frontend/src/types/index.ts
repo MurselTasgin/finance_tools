@@ -18,7 +18,8 @@ export interface FundRecord {
   market_cap: number | null;
   number_of_investors: number | null;
   number_of_shares: number | null;
-  created_at: string;
+  fund_type: string | null;
+  created_at?: string;
 }
 
 export interface PaginatedResponse<T> {

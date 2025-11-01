@@ -17,7 +17,7 @@ from typing import Dict, List, Tuple
 
 def get_database_path() -> str:
     """Get the database path from environment or use default."""
-    db_path = os.environ.get("DATABASE_NAME", "finance_tools.db")
+    db_path = os.environ.get("DATABASE_NAME", "test_finance_tools.db")
     if not os.path.isabs(db_path):
         # If relative path, make it relative to the project root
         project_root = Path(__file__).parent
